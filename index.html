@@ -176,7 +176,8 @@ tbody tr:first-child td {
   <button id="now">Current</button>
   <button id="next">Next ›</button>
 </nav>
-<div class="hint" id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go.</div>
+<div class="hint"
+  id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one.</div>
 <div class="scroll">
   <div id="out" class="msg">Loading…</div>
 </div>
@@ -215,9 +216,9 @@ let loading = false;
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-let grid = null;              // the last grid the API gave us
-let picked = null;            // {bookingId, resourceId, day} — tap-then-tap
-const expanded = new Set();   // Unallocated days shown as cards rather than a count
+let grid = null; // the last grid the API gave us
+let picked = null; // {bookingId, resourceId, day} — tap-then-tap
+const expanded = new Set(); // Unallocated days shown as cards rather than a count
 
 function cardHtml(c, cell) {
   const colour = COLOURS[c.workType] || COLOURS.other;
@@ -226,12 +227,14 @@ function cardHtml(c, cell) {
   // invented 7:00 AM would put a made-up arrival window in front of a builder.
   const time = c.startLabel ? esc(c.startLabel) : "All day";
   const sel = picked && picked.bookingId === c.bookingId &&
-    picked.resourceId === cell.resourceId && picked.day === cell.day ? " picked" : "";
+      picked.resourceId === cell.resourceId && picked.day === cell.day
+    ? " picked"
+    : "";
   return '<div class="card' + sel + '" draggable="true"' +
     ' data-booking="' + esc(c.bookingId) + '"' +
     ' style="border-color:' + colour + '">' +
-    '<b style="background:' + colour + '1f;color:' + colour + '">' +
-      (c.isLead ? "\u{1F451} " : "") + esc(c.label) + "</b>" +
+    '<b style="background:' + colour + "1f;color:" + colour + '">' +
+    (c.isLead ? "\u{1F451} " : "") + esc(c.label) + "</b>" +
     '<div class="body"><div class="time">' + time + "</div>" +
     '<div class="where">' + esc(c.client) + lot + " " + esc(c.address) + "</div>" +
     "</div></div>";
@@ -241,26 +244,24 @@ function cellHtml(cards, resourceId, day, extraClass) {
   const attrs = ' data-day="' + day + '"' +
     (resourceId === null ? ' data-unallocated="1"' : ' data-resource="' + esc(resourceId) + '"');
   const cls = extraClass + (cards.length ? "" : " empty");
-  const inner = cards.length
-    ? cards.map((c) => cardHtml(c, { resourceId, day })).join("")
-    : "\u2014";
-  return "<td class=\"" + cls.trim() + "\"" + attrs + ">" + inner + "</td>";
+  const inner = cards.length ? cards.map((c) => cardHtml(c, { resourceId, day })).join("") : "\u2014";
+  return '<td class="' + cls.trim() + '"' + attrs + ">" + inner + "</td>";
 }
 
 function render(g) {
   grid = g;
   const first = g.days[0], last = g.days[g.days.length - 1];
-  document.getElementById("title").textContent =
-    "Allocation: " + first.label + " \u2013 " + last.label;
+  document.getElementById("title").textContent = "Allocation: " + first.label + " \u2013 " + last.label;
 
   const head = '<tr><th class="who">CONTRACTOR</th>' +
     g.days.map((d) =>
       '<th class="day ' + (d.isWeekend ? "weekend " : "") + (d.isToday ? "today" : "") + '">' +
-      esc(d.label) + "</th>").join("") + "</tr>";
+      esc(d.label) + "</th>"
+    ).join("") + "</tr>";
 
   const total = g.days.reduce((n, d) => n + (g.unallocated[d.iso] || []).length, 0);
   const unallocRow = '<tr><th class="who">Unallocated <span class="count">(' +
-    total + ')</span></th>' +
+    total + ")</span></th>" +
     g.days.map((d) => {
       const cards = g.unallocated[d.iso] || [];
       const base = (d.isWeekend ? "weekend " : "") + (d.isToday ? "today " : "");
@@ -276,9 +277,15 @@ function render(g) {
   const rows = g.rows.map((r) =>
     '<tr><th class="who">' + esc(r.name) + ' <span class="count">(' + r.count + ")</span></th>" +
     g.days.map((d) =>
-      cellHtml(r.cells[d.iso] || [], r.resourceId, d.iso,
-        (d.isWeekend ? "weekend " : "") + (d.isToday ? "today " : ""))).join("") +
-    "</tr>").join("");
+      cellHtml(
+        r.cells[d.iso] || [],
+        r.resourceId,
+        d.iso,
+        (d.isWeekend ? "weekend " : "") + (d.isToday ? "today " : ""),
+      )
+    ).join("") +
+    "</tr>"
+  ).join("");
 
   const out = document.getElementById("out");
   out.className = "";
@@ -314,7 +321,10 @@ function setBusy(busy) {
 
 function authQuery(extra) {
   return new URLSearchParams(Object.assign({
-    u: auth.get("u") || "", e: auth.get("e") || "", s: auth.get("s") || "", p: String(offset),
+    u: auth.get("u") || "",
+    e: auth.get("e") || "",
+    s: auth.get("s") || "",
+    p: String(offset),
   }, extra || {}));
 }
 
@@ -327,7 +337,10 @@ async function load() {
   try {
     const res = await fetch(API + "?" + authQuery());
     const body = await res.json();
-    if (!res.ok) { out.textContent = body.error || "That did not work."; return; }
+    if (!res.ok) {
+      out.textContent = body.error || "That did not work.";
+      return;
+    }
     render(body);
   } catch (_) {
     out.textContent = "Could not reach the schedule. Check your signal and try again.";
@@ -346,7 +359,10 @@ async function move(bookingId, from, to) {
       body: JSON.stringify({ bookingId, from, to }),
     });
     const body = await res.json();
-    if (!res.ok) { note(body.error || "That did not work."); return; }
+    if (!res.ok) {
+      note(body.error || "That did not work.");
+      return;
+    }
     // The grid always rides back with the write, so the board cannot drift from
     // the table it is drawing.
     if (body.grid) render(body.grid);
@@ -355,6 +371,195 @@ async function move(bookingId, from, to) {
     note("Could not save that move. Check your signal.");
   } finally {
     setBusy(false);
+  }
+}
+
+// ── adding a site and a visit ─────────────────────────────────────────────
+//
+// A JOB IS A SITE, A BOOKING IS A VISIT to it. One address gets undergrounds
+// now and hook-ups months later, so the work type is asked here, on the visit,
+// and never on the site.
+
+let sheet = null; // {cell, jobId, siteLabel, newSite}
+let findTimer = null;
+
+function closeSheet() {
+  sheet = null;
+  const v = document.querySelector(".veil");
+  if (v) v.remove();
+}
+
+function openSheet(cell) {
+  const day = (grid.days.find((d) => d.iso === cell.day) || {}).label || cell.day;
+  const who = cell.resourceId === null
+    ? "Unallocated"
+    : (grid.rows.find((r) => r.resourceId === cell.resourceId) || {}).name || "";
+  sheet = { cell, jobId: null, siteLabel: "", newSite: false };
+
+  const veil = document.createElement("div");
+  veil.className = "veil";
+  veil.innerHTML = '<div class="sheet">' +
+    "<h2>Add a job</h2>" +
+    '<div class="when">' + esc(day) + " \u00b7 " + esc(who) + "</div>" +
+    '<div id="siteBlock"></div>' +
+    '<label for="wt">Work</label>' +
+    '<select id="wt">' +
+    (grid.workTypes || []).map((w) => '<option value="' + esc(w.value) + '">' + esc(w.label) + "</option>")
+      .join("") +
+    "</select>" +
+    '<label for="tm">Start time \u2014 leave blank for all day</label>' +
+    '<input id="tm" placeholder="07:00" inputmode="numeric">' +
+    '<div class="problem" id="prob"></div>' +
+    '<div class="actions">' +
+    '<button id="cancel">Cancel</button>' +
+    '<button id="save" class="primary">Add it</button>' +
+    "</div>" +
+    "</div>";
+  document.body.appendChild(veil);
+
+  veil.addEventListener("click", (ev) => {
+    if (ev.target === veil) closeSheet();
+  });
+  document.getElementById("cancel").onclick = closeSheet;
+  document.getElementById("save").onclick = saveSheet;
+  renderSiteBlock();
+}
+
+function renderSiteBlock() {
+  const b = document.getElementById("siteBlock");
+  if (!b) return;
+
+  if (sheet.jobId) {
+    b.innerHTML = "<label>Site</label>" +
+      '<div class="results"><div class="on">' + esc(sheet.siteLabel) + "</div></div>" +
+      '<button class="linkish" id="changeSite">Choose a different site</button>';
+    document.getElementById("changeSite").onclick = () => {
+      sheet.jobId = null;
+      sheet.newSite = false;
+      renderSiteBlock();
+    };
+    return;
+  }
+
+  if (sheet.newSite) {
+    b.innerHTML = '<label for="cl">Builder</label><input id="cl" placeholder="MAC Living">' +
+      '<label for="ad">Address</label><input id="ad" placeholder="5 Savona Way, Manor Lakes">' +
+      '<label for="lt">Lot number \u2014 optional</label><input id="lt" placeholder="20410">' +
+      '<button class="linkish" id="findInstead">Find an existing site instead</button>';
+    document.getElementById("findInstead").onclick = () => {
+      sheet.newSite = false;
+      renderSiteBlock();
+    };
+    return;
+  }
+
+  b.innerHTML =
+    '<label for="q">Site</label><input id="q" placeholder="Start typing an address or builder" autocomplete="off">' +
+    '<div class="results" id="hits" hidden></div>' +
+    '<button class="linkish" id="newSite">This is a new site</button>';
+  document.getElementById("newSite").onclick = () => {
+    sheet.newSite = true;
+    renderSiteBlock();
+  };
+  document.getElementById("q").oninput = (ev) => {
+    clearTimeout(findTimer);
+    const v = ev.target.value;
+    findTimer = setTimeout(() => searchSites(v), 220);
+  };
+}
+
+async function searchSites(q) {
+  const hits = document.getElementById("hits");
+  if (!hits) return;
+  if (q.trim().length < 2) {
+    hits.hidden = true;
+    return;
+  }
+  try {
+    const res = await fetch(API + "?" + authQuery({ find: q }));
+    const body = await res.json();
+    const sites = body.sites || [];
+    if (!sites.length) {
+      hits.hidden = false;
+      hits.innerHTML =
+        '<div class="sub2" style="padding:7px 9px">Nothing matched \u2014 add it as a new site.</div>';
+      return;
+    }
+    hits.hidden = false;
+    hits.innerHTML = sites.map((st) => {
+      const lot = st.lot_number ? "/" + esc(st.lot_number) : "";
+      return '<div data-job="' + esc(st.id) + '" data-label="' +
+        esc(st.client + lot + " " + st.address) + '">' +
+        esc(st.client) + lot + '<div class="sub2">' + esc(st.address) + "</div></div>";
+    }).join("");
+    for (const el of hits.querySelectorAll("div[data-job]")) {
+      el.onclick = () => {
+        sheet.jobId = el.dataset.job;
+        sheet.siteLabel = el.dataset.label;
+        renderSiteBlock();
+      };
+    }
+  } catch (_) {
+    hits.hidden = true;
+  }
+}
+
+async function post(body) {
+  const res = await fetch(API + "?" + authQuery(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { ok: res.ok, body: await res.json() };
+}
+
+async function saveSheet() {
+  const btn = document.getElementById("save");
+  const prob = document.getElementById("prob");
+  btn.disabled = true;
+  prob.textContent = "";
+  try {
+    let jobId = sheet.jobId;
+
+    // A new site is created first, then booked. If the site lands and the
+    // booking does not, the site is still worth keeping — it is a real address.
+    if (!jobId) {
+      if (!sheet.newSite) {
+        prob.textContent = "Pick a site, or add a new one.";
+        return;
+      }
+      const made = await post({
+        action: "createSite",
+        client: (document.getElementById("cl") || {}).value || "",
+        address: (document.getElementById("ad") || {}).value || "",
+        lot: (document.getElementById("lt") || {}).value || "",
+      });
+      if (made.body.problem) {
+        prob.textContent = made.body.problem;
+        return;
+      }
+      jobId = made.body.jobId;
+    }
+
+    const made = await post({
+      action: "createBooking",
+      jobId,
+      workType: document.getElementById("wt").value,
+      day: sheet.cell.day,
+      startTime: document.getElementById("tm").value,
+      resourceId: sheet.cell.resourceId,
+    });
+    if (made.body.problem) {
+      prob.textContent = made.body.problem;
+      return;
+    }
+    const g = made.body.grid;
+    closeSheet();
+    if (g) render(g);
+  } catch (_) {
+    prob.textContent = "Could not save that. Check your signal.";
+  } finally {
+    if (document.getElementById("save")) btn.disabled = false;
   }
 }
 
@@ -413,9 +618,11 @@ document.addEventListener("click", (ev) => {
   const card = ev.target.closest && ev.target.closest(".card");
   if (card) {
     const cell = cellOf(card.closest("td"));
-    if (picked && picked.bookingId === card.dataset.booking &&
-        picked.resourceId === cell.resourceId && picked.day === cell.day) {
-      picked = null;                       // tapping it again puts it back down
+    if (
+      picked && picked.bookingId === card.dataset.booking &&
+      picked.resourceId === cell.resourceId && picked.day === cell.day
+    ) {
+      picked = null; // tapping it again puts it back down
     } else {
       picked = Object.assign({ bookingId: card.dataset.booking }, cell);
     }
@@ -424,11 +631,25 @@ document.addEventListener("click", (ev) => {
   }
 
   const td = ev.target.closest && ev.target.closest("td[data-day]");
-  if (td && picked) {
+  if (!td) return;
+  if (picked) {
     const from = { resourceId: picked.resourceId, day: picked.day };
     const bookingId = picked.bookingId;
     picked = null;
     move(bookingId, from, cellOf(td));
+    return;
+  }
+  // Nothing in hand, so an empty square is an invitation to add work there.
+  // No per-cell button: 29 rows across 21 days is 609 of them.
+  if (!loading) openSheet(cellOf(td));
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape") return;
+  if (sheet) closeSheet();
+  else if (picked) {
+    picked = null;
+    render(grid);
   }
 });
 
