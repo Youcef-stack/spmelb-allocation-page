@@ -445,14 +445,6 @@ td.off::after {
   font-size: 17px;
   color: #9a9aa0;
 }
-body.offmode td[data-resource] {
-  cursor: crosshair;
-}
-body.offmode #offmode {
-  background: var(--link);
-  color: #fff;
-  border-radius: 6px;
-}
 .sheet.wide {
   width: 560px;
 }
@@ -581,12 +573,11 @@ th.who[data-row] {
   <button id="next">Next ›</button>
   <span class="grow"></span>
   <input id="jq" class="search" placeholder="Search jobs" autocomplete="off">
-  <button id="offmode">Days off</button>
   <button id="add" class="addbtn">+ Add job</button>
 </nav>
 <div id="qhits" class="results qhits" hidden></div>
 <div class="hint"
-  id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one, or ⋯ on a job to change its crew.</div>
+  id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one, or ⋯ on a job to change its crew. Double-tap an empty square to cross somebody out for that day.</div>
 <div class="scroll">
   <div id="out" class="msg">Loading…</div>
 </div>
@@ -787,8 +778,6 @@ async function move(bookingId, from, to) {
 
 
 
-let offMode = false;
-
 async function toggleDayOff(resourceId, day) {
   if (loading) return;
   setBusy(true);
@@ -878,9 +867,10 @@ function bookingRowHtml(v, people) {
     "</div>" +
 
     '<div class="chips">' +
-    (lead ? chip(lead, true) : '<span class="chip">Nobody leading</span>') +
+    (lead ? chip(lead, true) : "") +
     others.map((c) => chip(c, false)).join("") +
-    '<select data-add="' + esc(v.id) + '"><option value="">+ crew</option>' +
+    '<select data-add="' + esc(v.id) + '"><option value="">' +
+    (v.crew.length ? "+ crew" : "Nobody on this \u2014 pick who leads it") + "</option>" +
     spare.map((r) => '<option value="' + esc(r.resourceId) + '">' + esc(r.name) + "</option>").join("") +
     "</select>" +
     "</div>" +
@@ -993,12 +983,17 @@ function wireBookingRows(jobId) {
 }
 
 async function addVisit(jobId) {
-  const today = (grid.days.find((d) => d.isToday) || grid.days[0]).iso;
+  // Tomorrow at 7am, because that is when this business starts and a blank time
+  // on a fresh row reads as broken rather than as "all day".
+  const days = grid.days.map((d) => d.iso);
+  const todayIdx = grid.days.findIndex((d) => d.isToday);
+  const day = days[todayIdx >= 0 ? Math.min(todayIdx + 1, days.length - 1) : 0];
   await jobAction(jobId, {
     action: "createBooking",
     jobId,
     workType: (grid.workTypes || [{ value: "other" }])[0].value,
-    day: today,
+    day,
+    startTime: "07:00",
   });
 }
 
@@ -1008,7 +1003,7 @@ async function addVisit(jobId) {
 // Live, unlike the quick-add sheet's list: the job exists, so a dropped file
 // uploads straight away and a rename or a removal takes effect immediately.
 
-let liveFiles = { jobId: null, list: [], busy: false };
+let liveFiles = { jobId: null, list: [], busy: false, descriptions: [] };
 
 function livePanelHtml() {
   return "<label>Files</label>" +
@@ -1024,19 +1019,24 @@ function renderLiveFiles() {
     box.innerHTML = '<div class="nobody">Sending\u2026</div>';
     return;
   }
-  box.innerHTML = liveFiles.list.length
+  // The same handful get typed over and over — Architectural, Soil Report, LPOD.
+  // Offering what has been used before means typing "A" and pressing Enter.
+  const opts = '<datalist id="descopts">' +
+    (liveFiles.descriptions || []).map((d) => '<option value="' + esc(d) + '"></option>').join("") +
+    "</datalist>";
+  box.innerHTML = opts + (liveFiles.list.length
     ? liveFiles.list.map((f) =>
       '<div class="filerow">' +
       // The name OPENS the file. A private bucket means a plan you can list but
       // never look at, which is most of the reason to file it in the first place.
       '<a href="#" class="flink" data-open="' + esc(f.id) + '">' + esc(f.name) + "</a>" +
-      '<input class="fdesc" data-id="' + esc(f.id) + '" placeholder="Description" value="' +
-      esc(f.plan_type || "") + '">' +
+      '<input class="fdesc" list="descopts" data-id="' + esc(f.id) +
+      '" placeholder="Description" value="' + esc(f.plan_type || "") + '">' +
       '<span class="fsize">' + Math.max(1, Math.round((f.size_bytes || 0) / 1024)) + " KB</span>" +
       '<button class="x" data-rm="' + esc(f.id) + '" title="Take it off">\u00d7</button>' +
       "</div>"
     ).join("")
-    : '<div class="nobody">No files on this job yet.</div>';
+    : '<div class="nobody">No files on this job yet.</div>');
 
   for (const a of box.querySelectorAll("a[data-open]")) {
     a.onclick = async (ev) => {
@@ -1063,6 +1063,9 @@ function renderLiveFiles() {
       }
       const row = liveFiles.list.find((f) => f.id === inp.dataset.id);
       if (row) row.plan_type = res.body.description;
+      if (res.body.description && !(liveFiles.descriptions || []).includes(res.body.description)) {
+        liveFiles.descriptions = (liveFiles.descriptions || []).concat([res.body.description]).sort();
+      }
     };
   }
   for (const b of box.querySelectorAll("button[data-rm]")) {
@@ -1079,10 +1082,17 @@ function renderLiveFiles() {
 }
 
 async function loadLiveFiles(jobId) {
-  liveFiles = { jobId, list: [], busy: false };
+  const keep = liveFiles.descriptions || [];
+  liveFiles = { jobId, list: [], busy: false, descriptions: keep };
   try {
-    const res = await fetch(API + "?" + authQuery({ files: jobId }));
-    liveFiles.list = (await res.json()).files || [];
+    const [f, d] = await Promise.all([
+      fetch(API + "?" + authQuery({ files: jobId })).then((r) => r.json()),
+      keep.length
+        ? Promise.resolve({ descriptions: keep })
+        : fetch(API + "?" + authQuery({ descriptions: "1" })).then((r) => r.json()),
+    ]);
+    liveFiles.list = f.files || [];
+    liveFiles.descriptions = d.descriptions || keep;
   } catch (_) { /* an empty list is honest enough here */ }
   renderLiveFiles();
 }
@@ -1852,6 +1862,22 @@ async function saveSheet() {
 }
 
 
+
+let tapTimer = null;
+
+// Double-tap a square to cross somebody out for that day, and again to undo.
+// It lives on the square rather than behind a mode button because that is where
+// the decision is made — looking at the day you want to protect.
+document.addEventListener("dblclick", (ev) => {
+  const td = ev.target.closest && ev.target.closest("td[data-resource]");
+  if (!td || loading || crewSheet || sheet || jobSheet) return;
+  if (td.querySelector(".card")) return; // there is work here; that is not a free day
+  ev.preventDefault();
+  clearTimeout(tapTimer);
+  picked = null;
+  toggleDayOff(td.dataset.resource, td.dataset.day);
+});
+
 // ── the order people sit in ───────────────────────────────────────────────
 //
 // Dragging a NAME reorders the board; dragging a CARD moves work. They are
@@ -1959,18 +1985,6 @@ document.addEventListener("drop", (ev) => {
 // on a phone. Same fallback report-edit uses for moving a photo.
 
 document.addEventListener("click", (ev) => {
-  // Crossing days out is a MODE, so one tap marks and one tap clears — a week off
-  // is five taps, not five trips through a dialog.
-  if (offMode) {
-    const cell = ev.target.closest && ev.target.closest("td[data-resource]");
-    if (cell) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      toggleDayOff(cell.dataset.resource, cell.dataset.day);
-    }
-    return;
-  }
-
   // The crew button comes first: it sits inside a card, and tapping it must not
   // also pick the card up for a move.
   const more = ev.target.closest && ev.target.closest("[data-more]");
@@ -2007,7 +2021,14 @@ document.addEventListener("click", (ev) => {
   }
   // Nothing in hand, so an empty square is an invitation to add work there.
   // No per-cell button: 29 rows across 21 days is 609 of them.
-  if (!loading && !crewSheet && !sheet && !jobSheet) openSheet(cellOf(td));
+  //
+  // Held for a moment first: a DOUBLE tap crosses the day out, and the browser
+  // fires the single tap before it, so opening the sheet immediately would fight
+  // the gesture every time.
+  if (loading || crewSheet || sheet || jobSheet) return;
+  const cell = cellOf(td);
+  clearTimeout(tapTimer);
+  tapTimer = setTimeout(() => openSheet(cell), 260);
 });
 
 document.addEventListener("keydown", (ev) => {
@@ -2043,12 +2064,6 @@ document.addEventListener("click", (ev) => {
   if (!ev.target.closest || ev.target.closest("#qhits") || ev.target.closest("#jq")) return;
   document.getElementById("qhits").hidden = true;
 });
-
-document.getElementById("offmode").onclick = () => {
-  offMode = !offMode;
-  document.body.classList.toggle("offmode", offMode);
-  note(offMode ? "Tap a square to cross somebody out for that day. Tap again to undo." : null);
-};
 
 document.getElementById("add").onclick = () => {
   if (!loading && !crewSheet && !sheet && !jobSheet) openQuickJob();
