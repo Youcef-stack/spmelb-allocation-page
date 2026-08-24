@@ -586,6 +586,24 @@ th.who[data-row] {
   color: var(--muted);
   font-size: 12px;
 }
+.repchip {
+  display: inline-block;
+  font-size: 11px;
+  border-radius: 20px;
+  padding: 2px 9px;
+  margin-bottom: 7px;
+  background: #eef1f4;
+  color: var(--muted);
+}
+.repchip.approved {
+  background: #e6f4ea;
+  color: #1e6b3a;
+  cursor: pointer;
+}
+.repchip.submitted {
+  background: #fff3d6;
+  color: #8a6100;
+}
 </style>
 
 <header>
@@ -863,6 +881,8 @@ function dayNameOf(iso) {
   return DAY_NAMES[new Date(iso + "T00:00:00Z").getUTCDay()];
 }
 
+let jobReports = [];
+
 function bookingRowHtml(v, people) {
   const onJob = new Set(v.crew.map((c) => c.resourceId));
   const spare = people.filter((r) => !onJob.has(r.resourceId));
@@ -885,7 +905,16 @@ function bookingRowHtml(v, people) {
       "</div>";
   }
 
+  const rep = (jobReports || []).find((r) => r.bookingId === v.id);
+  const repChip = rep
+    ? '<span class="repchip ' + esc(rep.state) + '"' +
+      (rep.hasPdf ? ' data-report="' + esc(rep.id) + '" title="Open the report"' : "") + ">" +
+      (rep.state === "approved" ? "\u2705 " : "\u{1F4DD} ") + esc(rep.stateLabel) +
+      (rep.photos ? " \u00b7 " + rep.photos + " photos" : "") + "</span>"
+    : "";
+
   return '<div class="bookingrow" data-b="' + esc(v.id) + '">' +
+    repChip +
     '<div class="brtop">' +
     '<select data-f="workType" data-b="' + esc(v.id) + '">' +
     (grid.workTypes || []).map((w) =>
@@ -962,12 +991,27 @@ async function openJobSheet(jobId) {
   wireLivePanel(jobId);
 }
 
+function reportsHtml(job) {
+  // A report with no visit behind it still has to show — the visit may have been
+  // called off after the crew filled it in, and the work still happened.
+  const orphans = (job.reports || []).filter((r) => !job.visits.some((v) => v.id === r.bookingId));
+  if (!orphans.length) return "";
+  return "<label>Other reports</label>" + orphans.map((r) =>
+    '<div class="crewrow"><span class="nm">' + esc(r.stateLabel) + " \u00b7 " +
+    esc(r.workType.replace(/_/g, " ")) + '<div class="sub2">' + esc(r.lead) +
+    (r.photos ? " \u00b7 " + r.photos + " photos" : "") + "</div></span>" +
+    (r.hasPdf ? '<button class="rpt" data-report="' + esc(r.id) + '">Open</button>' : "") +
+    "</div>"
+  ).join("");
+}
+
 function paintBookings(job, jobId) {
   const box = document.getElementById("bookingsBox");
   if (!box) return;
-  box.innerHTML = job.visits.length
+  jobReports = job.reports || [];
+  box.innerHTML = (job.visits.length
     ? job.visits.map((v) => bookingRowHtml(v, grid.rows)).join("")
-    : '<div class="nobody">No visits booked yet.</div>';
+    : '<div class="nobody">No visits booked yet.</div>') + reportsHtml(job);
   wireBookingRows(jobId);
 }
 
@@ -1027,6 +1071,16 @@ function wireBookingRows(jobId) {
   }
   for (const b of document.querySelectorAll("button[data-calloff]")) {
     b.onclick = () => jobAction(jobId, { action: "cancelBooking", bookingId: b.dataset.calloff });
+  }
+  for (const el of document.querySelectorAll("[data-report]")) {
+    el.onclick = async () => {
+      const res = await post({ action: "reportUrl", reportId: el.dataset.report });
+      if (res.body.problem) {
+        note(res.body.problem);
+        return;
+      }
+      window.open(res.body.url, "_blank", "noopener");
+    };
   }
   for (const b of document.querySelectorAll("button[data-repeat]")) {
     b.onclick = () => jobAction(jobId, { action: "repeatBooking", bookingId: b.dataset.repeat });
