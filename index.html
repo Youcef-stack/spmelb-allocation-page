@@ -604,6 +604,12 @@ th.who[data-row] {
   background: #fff3d6;
   color: #8a6100;
 }
+.where[data-jobfile] {
+  cursor: pointer;
+}
+.where[data-jobfile]:hover {
+  text-decoration: underline;
+}
 </style>
 
 <header>
@@ -620,7 +626,7 @@ th.who[data-row] {
 </nav>
 <div id="qhits" class="results qhits" hidden></div>
 <div class="hint"
-  id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one, or ⋯ on a job to change its crew. Double-tap an empty square to cross somebody out for that day.</div>
+  id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one, or ⋯ on a job to change its crew. Double-tap an empty square to cross somebody out for that day. Tap the address on a job to open its file.</div>
 <div class="scroll">
   <div id="out" class="msg">Loading…</div>
 </div>
@@ -680,7 +686,8 @@ function cardHtml(c, cell) {
     '<span class="more" data-more="' + esc(c.bookingId) + '" title="Crew">\u22ef</span>' +
     "</b>" +
     '<div class="body"><div class="time">' + time + "</div>" +
-    '<div class="where">' + esc(c.client) + lot + " " + esc(c.address) + "</div>" +
+    '<div class="where" data-jobfile="' + esc(c.jobId) + '" title="Open the job file">' +
+    esc(c.client) + lot + " " + esc(c.address) + "</div>" +
     "</div></div>";
 }
 
@@ -2108,6 +2115,17 @@ document.addEventListener("click", (ev) => {
   // never survive into the next gesture — it would fire mid-move and put a sheet
   // over the board, which reads as the drag simply not working.
   clearTimeout(tapTimer);
+
+  // The address opens the JOB FILE. Like the crew button it sits INSIDE a card,
+  // so it has to stop the click before the card branch picks the job up.
+  const jobfile = ev.target.closest && ev.target.closest("[data-jobfile]");
+  if (jobfile) {
+    ev.stopPropagation();
+    picked = null;
+    render(grid);
+    openJobSheet(jobfile.dataset.jobfile);
+    return;
+  }
 
   const more = ev.target.closest && ev.target.closest("[data-more]");
   if (more) {
