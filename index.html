@@ -453,6 +453,116 @@ body.offmode #offmode {
   color: #fff;
   border-radius: 6px;
 }
+.sheet.wide {
+  width: 560px;
+}
+.bookingrow {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 11px;
+  margin-bottom: 9px;
+}
+.bookingrow.doneish {
+  background: #f2f8f3;
+}
+.brtop {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.brtop select {
+  flex: 1;
+}
+.brwhen {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 7px;
+}
+.brwhen input {
+  width: auto;
+  flex: 1;
+}
+.brday {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 66px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  margin-top: 7px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 2px 5px 2px 9px;
+  font-size: 12px;
+  background: var(--paper);
+}
+.chip.lead {
+  border-color: var(--link);
+}
+.chip button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: #a3554e;
+  font: inherit;
+  padding: 0 3px;
+}
+.chips select {
+  width: auto;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.bookingrow textarea {
+  width: 100%;
+  font: inherit;
+  margin-top: 7px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  resize: vertical;
+  min-height: 44px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.calloff {
+  border: 1px solid #e3c9c5;
+  color: #a3554e;
+  background: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.flink {
+  flex: 1;
+  color: var(--link);
+  text-decoration: none;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flink:hover {
+  text-decoration: underline;
+}
+.fdesc {
+  width: 150px;
+  flex: 0 0 150px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
 </style>
 
 <header>
@@ -723,7 +833,58 @@ async function searchJobs(q) {
   }
 }
 
+let jobSheet = null; // the job whose sheet is open
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function dayNameOf(iso) {
+  if (!iso) return "";
+  return DAY_NAMES[new Date(iso + "T00:00:00Z").getUTCDay()];
+}
+
+function bookingRowHtml(v, people) {
+  const onJob = new Set(v.crew.map((c) => c.resourceId));
+  const spare = people.filter((r) => !onJob.has(r.resourceId));
+  const lead = v.crew.find((c) => c.isLead);
+  const others = v.crew.filter((c) => !c.isLead);
+
+  const chip = (c, isLead) =>
+    '<span class="chip' + (isLead ? " lead" : "") + '">' + (isLead ? "\u{1F451} " : "") +
+    esc(c.name) + '<button data-off="' + esc(c.resourceId) + '" data-b="' + esc(v.id) +
+    '" title="Take them off">\u00d7</button></span>';
+
+  return '<div class="bookingrow" data-b="' + esc(v.id) + '">' +
+    '<div class="brtop">' +
+    '<select data-f="workType" data-b="' + esc(v.id) + '">' +
+    (grid.workTypes || []).map((w) =>
+      '<option value="' + esc(w.value) + '"' + (w.value === v.workType ? " selected" : "") + ">" +
+      esc(w.label) + "</option>"
+    ).join("") +
+    "</select>" +
+    '<button class="calloff" data-calloff="' + esc(v.id) + '">Call off</button>' +
+    "</div>" +
+
+    '<div class="brwhen">' +
+    '<input type="date" data-f="day" data-b="' + esc(v.id) + '" value="' + esc(v.day || "") + '">' +
+    '<input type="time" data-f="startTime" data-b="' + esc(v.id) + '" value="' + esc(v.startValue || "") + '">' +
+    '<span class="brday">' + esc(dayNameOf(v.day)) + "</span>" +
+    "</div>" +
+
+    '<div class="chips">' +
+    (lead ? chip(lead, true) : '<span class="chip">Nobody leading</span>') +
+    others.map((c) => chip(c, false)).join("") +
+    '<select data-add="' + esc(v.id) + '"><option value="">+ crew</option>' +
+    spare.map((r) => '<option value="' + esc(r.resourceId) + '">' + esc(r.name) + "</option>").join("") +
+    "</select>" +
+    "</div>" +
+
+    '<textarea data-f="notes" data-b="' + esc(v.id) +
+    '" placeholder="Note to contractor">' + esc(v.notes || "") + "</textarea>" +
+    "</div>";
+}
+
 async function openJobSheet(jobId) {
+  // Reopening itself after a save is normal; opening over ANOTHER sheet is not.
   if (crewSheet || sheet) return;
   let job = null;
   try {
@@ -734,26 +895,24 @@ async function openJobSheet(jobId) {
     note("Could not open that job.");
     return;
   }
+  jobSheet = jobId;
 
-  crewSheet = null;
+  const people = grid.rows;
   const lot = job.lot_number ? "/" + esc(job.lot_number) : "";
   const visits = job.visits.length
-    ? job.visits.map((v) => {
-      const who = v.crew.length
-        ? v.crew.map((c) => (c.isLead ? "\u{1F451} " : "") + esc(c.name)).join(", ")
-        : "nobody yet";
-      return '<div class="crewrow"><span class="nm">' + esc(v.day) + " \u00b7 " +
-        esc(v.workType.replace(/_/g, " ")) + '<div class="sub2">' + who + "</div></span></div>";
-    }).join("")
+    ? job.visits.map((v) => bookingRowHtml(v, people)).join("")
     : '<div class="nobody">No visits booked yet.</div>';
 
+  const old = document.querySelector(".veil");
+  if (old) old.remove();
   const veil = document.createElement("div");
   veil.className = "veil";
-  veil.innerHTML = '<div class="sheet">' +
+  veil.innerHTML = '<div class="sheet wide">' +
     "<h2>" + esc(job.client) + lot + "</h2>" +
     '<div class="when">' + esc(job.address) +
     (job.supervisor ? " \u00b7 " + esc(job.supervisor) : "") + "</div>" +
-    "<label>Visits</label>" + visits +
+    "<label>Bookings</label>" + visits +
+    '<button class="linkish" id="addvisit">+ Add a visit</button>' +
     livePanelHtml() +
     '<div class="problem" id="prob"></div>' +
     '<div class="actions"><button id="cancel">Done</button></div>' +
@@ -761,11 +920,81 @@ async function openJobSheet(jobId) {
   document.body.appendChild(veil);
 
   veil.addEventListener("click", (ev) => {
-    if (ev.target === veil) closeCrewSheet();
+    if (ev.target === veil) closeJobSheet();
   });
-  document.getElementById("cancel").onclick = closeCrewSheet;
+  document.getElementById("cancel").onclick = closeJobSheet;
+  wireBookingRows(jobId);
+  document.getElementById("addvisit").onclick = () => addVisit(jobId);
   wireLivePanel(jobId);
 }
+
+function closeJobSheet() {
+  jobSheet = null;
+  const v = document.querySelector(".veil");
+  if (v) v.remove();
+}
+
+async function jobAction(jobId, body) {
+  const prob = document.getElementById("prob");
+  if (prob) prob.textContent = "";
+  try {
+    const res = await post(body);
+    if (res.body.problem) {
+      if (prob) prob.textContent = res.body.problem;
+      return false;
+    }
+    // The board behind the sheet moves too — a visit rescheduled here has to
+    // leave its old square.
+    if (res.body.grid) render(res.body.grid);
+    closeJobSheet();
+    await openJobSheet(jobId);
+    return true;
+  } catch (_) {
+    if (prob) prob.textContent = "Could not save that.";
+    return false;
+  }
+}
+
+function wireBookingRows(jobId) {
+  for (const el of document.querySelectorAll("[data-f]")) {
+    el.onchange = () => {
+      const b = el.dataset.b;
+      const body = { action: "editBooking", bookingId: b };
+      if (el.dataset.f === "startTime") {
+        // The instant depends on the date, so the day always travels with it.
+        body.day = document.querySelector('input[data-f="day"][data-b="' + b + '"]').value;
+        body.startTime = el.value;
+      } else {
+        body[el.dataset.f] = el.value;
+      }
+      jobAction(jobId, body);
+    };
+  }
+  for (const b of document.querySelectorAll("button[data-calloff]")) {
+    b.onclick = () => jobAction(jobId, { action: "cancelBooking", bookingId: b.dataset.calloff });
+  }
+  for (const b of document.querySelectorAll(".chip button[data-off]")) {
+    b.onclick = () =>
+      jobAction(jobId, { action: "crew", bookingId: b.dataset.b, what: "remove", resourceId: b.dataset.off });
+  }
+  for (const sel of document.querySelectorAll("select[data-add]")) {
+    sel.onchange = () => {
+      if (!sel.value) return;
+      jobAction(jobId, { action: "crew", bookingId: sel.dataset.add, what: "add", resourceId: sel.value });
+    };
+  }
+}
+
+async function addVisit(jobId) {
+  const today = (grid.days.find((d) => d.isToday) || grid.days[0]).iso;
+  await jobAction(jobId, {
+    action: "createBooking",
+    jobId,
+    workType: (grid.workTypes || [{ value: "other" }])[0].value,
+    day: today,
+  });
+}
+
 
 // ── files already on a job ────────────────────────────────────────────────
 //
@@ -791,27 +1020,42 @@ function renderLiveFiles() {
   box.innerHTML = liveFiles.list.length
     ? liveFiles.list.map((f) =>
       '<div class="filerow">' +
-      '<input class="fname" data-id="' + esc(f.id) + '" value="' + esc(f.name) + '">' +
+      // The name OPENS the file. A private bucket means a plan you can list but
+      // never look at, which is most of the reason to file it in the first place.
+      '<a href="#" class="flink" data-open="' + esc(f.id) + '">' + esc(f.name) + "</a>" +
+      '<input class="fdesc" data-id="' + esc(f.id) + '" placeholder="Description" value="' +
+      esc(f.plan_type || "") + '">' +
       '<span class="fsize">' + Math.max(1, Math.round((f.size_bytes || 0) / 1024)) + " KB</span>" +
       '<button class="x" data-rm="' + esc(f.id) + '" title="Take it off">\u00d7</button>' +
       "</div>"
     ).join("")
     : '<div class="nobody">No files on this job yet.</div>';
 
-  for (const inp of box.querySelectorAll(".fname")) {
-    // On change, not on every keystroke — one write per rename, not per letter.
-    inp.onchange = async () => {
-      const res = await post({ action: "renameFile", fileId: inp.dataset.id, name: inp.value });
+  for (const a of box.querySelectorAll("a[data-open]")) {
+    a.onclick = async (ev) => {
+      ev.preventDefault();
+      const res = await post({ action: "fileUrl", fileId: a.dataset.open });
       if (res.body.problem) {
         note(res.body.problem);
         return;
       }
-      inp.value = res.body.name;
-      // The local list has to move too. Updating only the input meant the next
-      // re-render — removing another file, say — redrew the OLD name from stale
-      // state, so a saved rename looked like it had been thrown away.
+      window.open(res.body.url, "_blank", "noopener");
+    };
+  }
+  for (const inp of box.querySelectorAll(".fdesc")) {
+    // On change, not per keystroke — one write per description, not per letter.
+    inp.onchange = async () => {
+      const res = await post({
+        action: "describeFile",
+        fileId: inp.dataset.id,
+        description: inp.value,
+      });
+      if (res.body.problem) {
+        note(res.body.problem);
+        return;
+      }
       const row = liveFiles.list.find((f) => f.id === inp.dataset.id);
-      if (row) row.name = res.body.name;
+      if (row) row.plan_type = res.body.description;
     };
   }
   for (const b of box.querySelectorAll("button[data-rm]")) {
@@ -1693,12 +1937,13 @@ document.addEventListener("click", (ev) => {
   }
   // Nothing in hand, so an empty square is an invitation to add work there.
   // No per-cell button: 29 rows across 21 days is 609 of them.
-  if (!loading && !crewSheet && !sheet) openSheet(cellOf(td));
+  if (!loading && !crewSheet && !sheet && !jobSheet) openSheet(cellOf(td));
 });
 
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  if (crewSheet) closeCrewSheet();
+  if (jobSheet) closeJobSheet();
+  else if (crewSheet) closeCrewSheet();
   else if (sheet) closeSheet();
   else if (picked) {
     picked = null;
@@ -1736,7 +1981,7 @@ document.getElementById("offmode").onclick = () => {
 };
 
 document.getElementById("add").onclick = () => {
-  if (!loading && !crewSheet && !sheet) openQuickJob();
+  if (!loading && !crewSheet && !sheet && !jobSheet) openQuickJob();
 };
 load();
 </script>
