@@ -358,6 +358,10 @@ td.target {
   color: var(--muted);
   padding: 8px 0;
 }
+.addbtn {
+  margin-left: auto;
+  font-weight: 600;
+}
 </style>
 
 <header>
@@ -368,6 +372,7 @@ td.target {
   <button id="prev">‹ Previous</button>
   <button id="now">Current</button>
   <button id="next">Next ›</button>
+  <button id="add" class="addbtn">+ Add job</button>
 </nav>
 <div class="hint"
   id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one, or ⋯ on a job to change its crew.</div>
@@ -683,17 +688,33 @@ function closeSheet() {
 }
 
 function openSheet(cell) {
-  const day = (grid.days.find((d) => d.iso === cell.day) || {}).label || cell.day;
-  const who = cell.resourceId === null
+  // cell === null means the button at the top rather than a tap on a square:
+  // there is no day and nobody implied, so both become fields.
+  const free = cell === null;
+  const day = free ? "" : (grid.days.find((d) => d.iso === cell.day) || {}).label || cell.day;
+  const who = free ? "" : cell.resourceId === null
     ? "Unallocated"
     : (grid.rows.find((r) => r.resourceId === cell.resourceId) || {}).name || "";
-  sheet = { cell, jobId: null, siteLabel: "", newSite: false };
+  sheet = { cell, free, jobId: null, siteLabel: "", newSite: free };
+
+  const first = grid.days[0].iso, last = grid.days[grid.days.length - 1].iso;
+  const today = (grid.days.find((d) => d.isToday) || {}).iso;
+  const whenBlock = free
+    ? '<label for="dy">Day</label>' +
+      '<input id="dy" type="date" value="' + (today || first) + '" min="' + first + '" max="' + last + '">' +
+      '<label for="who">Who is on it</label>' +
+      '<select id="who"><option value="">Unallocated for now</option>' +
+      grid.rows.map((r) => '<option value="' + esc(r.resourceId) + '">' + esc(r.name) + "</option>").join("") +
+      "</select>"
+    : "";
 
   const veil = document.createElement("div");
   veil.className = "veil";
   veil.innerHTML = '<div class="sheet">' +
-    "<h2>Add a job</h2>" +
-    '<div class="when">' + esc(day) + " \u00b7 " + esc(who) + "</div>" +
+    "<h2>" + (free ? "New job" : "Add a job") + "</h2>" +
+    (free
+      ? '<div class="when">Anywhere in these three weeks</div>'
+      : '<div class="when">' + esc(day) + " \u00b7 " + esc(who) + "</div>") +
     '<div id="siteBlock"></div>' +
     '<label for="wt">Work</label>' +
     '<select id="wt">' +
@@ -702,6 +723,7 @@ function openSheet(cell) {
     "</select>" +
     '<label for="tm">Start time \u2014 leave blank for all day</label>' +
     '<input id="tm" placeholder="07:00" inputmode="numeric">' +
+    whenBlock +
     '<div class="problem" id="prob"></div>' +
     '<div class="actions">' +
     '<button id="cancel">Cancel</button>' +
@@ -834,13 +856,22 @@ async function saveSheet() {
       jobId = made.body.jobId;
     }
 
+    // From a tapped square the day and the person are already decided; from the
+    // button at the top they are fields, and "Unallocated for now" is a real
+    // answer rather than a missing one.
+    const day = sheet.free ? document.getElementById("dy").value : sheet.cell.day;
+    const resourceId = sheet.free
+      ? (document.getElementById("who").value || null)
+      : sheet.cell.resourceId;
+    if (!day) { prob.textContent = "Pick a day."; return; }
+
     const made = await post({
       action: "createBooking",
       jobId,
       workType: document.getElementById("wt").value,
-      day: sheet.cell.day,
+      day,
       startTime: document.getElementById("tm").value,
-      resourceId: sheet.cell.resourceId,
+      resourceId,
     });
     if (made.body.problem) {
       prob.textContent = made.body.problem;
@@ -961,6 +992,9 @@ document.getElementById("next").onclick = () => {
 document.getElementById("now").onclick = () => {
   offset = 0;
   load();
+};
+document.getElementById("add").onclick = () => {
+  if (!loading && !crewSheet && !sheet) openSheet(null);
 };
 load();
 </script>
