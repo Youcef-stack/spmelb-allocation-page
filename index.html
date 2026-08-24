@@ -434,6 +434,25 @@ td.target {
 .addbtn {
   margin-left: 0;
 }
+td.off {
+  background: repeating-linear-gradient(
+    45deg, #f4f4f5, #f4f4f5 6px, #e6e6e8 6px, #e6e6e8 12px
+  ) !important;
+  text-align: center;
+}
+td.off::after {
+  content: "\00d7";
+  font-size: 17px;
+  color: #9a9aa0;
+}
+body.offmode td[data-resource] {
+  cursor: crosshair;
+}
+body.offmode #offmode {
+  background: var(--link);
+  color: #fff;
+  border-radius: 6px;
+}
 </style>
 
 <header>
@@ -446,6 +465,7 @@ td.target {
   <button id="next">Next ›</button>
   <span class="grow"></span>
   <input id="jq" class="search" placeholder="Search jobs" autocomplete="off">
+  <button id="offmode">Days off</button>
   <button id="add" class="addbtn">+ Add job</button>
 </nav>
 <div id="qhits" class="results qhits" hidden></div>
@@ -547,14 +567,16 @@ function render(g) {
 
   const rows = g.rows.map((r) =>
     '<tr><th class="who">' + esc(r.name) + ' <span class="count">(' + r.count + ")</span></th>" +
-    g.days.map((d) =>
-      cellHtml(
-        r.cells[d.iso] || [],
-        r.resourceId,
-        d.iso,
-        (d.isWeekend ? "weekend " : "") + (d.isToday ? "today " : ""),
-      )
-    ).join("") +
+    g.days.map((d) => {
+      const base = (d.isWeekend ? "weekend " : "") + (d.isToday ? "today " : "");
+      // Crossed out beats whatever else the cell might say: the whole point is
+      // that work must not land here.
+      if ((r.off || []).includes(d.iso)) {
+        return '<td class="' + base + 'off" data-day="' + d.iso +
+          '" data-resource="' + esc(r.resourceId) + '"></td>';
+      }
+      return cellHtml(r.cells[d.iso] || [], r.resourceId, d.iso, base);
+    }).join("") +
     "</tr>"
   ).join("");
 
@@ -646,6 +668,23 @@ async function move(bookingId, from, to) {
 }
 
 
+
+
+let offMode = false;
+
+async function toggleDayOff(resourceId, day) {
+  if (loading) return;
+  setBusy(true);
+  try {
+    const res = await post({ action: "dayOff", resourceId, day });
+    if (res.body.problem) note(res.body.problem);
+    if (res.body.grid) render(res.body.grid);
+  } catch (_) {
+    note("Could not save that.");
+  } finally {
+    setBusy(false);
+  }
+}
 
 // ── finding a job, and looking at one ─────────────────────────────────────
 //
@@ -1606,6 +1645,18 @@ document.addEventListener("drop", (ev) => {
 // on a phone. Same fallback report-edit uses for moving a photo.
 
 document.addEventListener("click", (ev) => {
+  // Crossing days out is a MODE, so one tap marks and one tap clears — a week off
+  // is five taps, not five trips through a dialog.
+  if (offMode) {
+    const cell = ev.target.closest && ev.target.closest("td[data-resource]");
+    if (cell) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleDayOff(cell.dataset.resource, cell.dataset.day);
+    }
+    return;
+  }
+
   // The crew button comes first: it sits inside a card, and tapping it must not
   // also pick the card up for a move.
   const more = ev.target.closest && ev.target.closest("[data-more]");
@@ -1677,6 +1728,12 @@ document.addEventListener("click", (ev) => {
   if (!ev.target.closest || ev.target.closest("#qhits") || ev.target.closest("#jq")) return;
   document.getElementById("qhits").hidden = true;
 });
+
+document.getElementById("offmode").onclick = () => {
+  offMode = !offMode;
+  document.body.classList.toggle("offmode", offMode);
+  note(offMode ? "Tap a square to cross somebody out for that day. Tap again to undo." : null);
+};
 
 document.getElementById("add").onclick = () => {
   if (!loading && !crewSheet && !sheet) openQuickJob();
