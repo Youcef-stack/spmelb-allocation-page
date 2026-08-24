@@ -367,6 +367,49 @@ td.target {
   gap: 12px;
   align-items: center;
 }
+.drop {
+  border: 1.5px dashed var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.drop.over {
+  border-color: var(--link);
+  background: #f0f6ff;
+  color: var(--ink);
+}
+.filerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.filerow:last-child {
+  border-bottom: 0;
+}
+.filerow .fname {
+  flex: 1;
+  padding: 5px 7px;
+}
+.filerow .fsize {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.filerow button.x {
+  font: inherit;
+  font-size: 12px;
+  background: none;
+  border: 1px solid #e3c9c5;
+  color: #a3554e;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
 </style>
 
 <header>
@@ -677,6 +720,217 @@ async function crewAction(what, resourceId) {
   }
 }
 
+
+// ── quick add: a JOB and its files, nothing else ──────────────────────────
+//
+// A job is a SITE. It does NOT need booking in — the owner's call: get the
+// address and its plans into the book fast, then book a visit onto it later by
+// tapping a square. Asking for a day and a crew here is what made it slow.
+//
+// Files reuse `job_plans` and the private `job-plans` bucket the Groundplan
+// ingest already writes to, and the bytes go STRAIGHT to Storage on a signed
+// URL — never through the function — so a 20 MB set of plans is not squeezed
+// through a JSON body.
+
+async function sha256Hex(file) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function baseName(filename) {
+  return filename.replace(/\.[^.]+$/, "") || filename;
+}
+
+function fileRows() {
+  if (!sheet.files.length) return '<div class="nobody">No files yet.</div>';
+  return sheet.files.map((f, i) =>
+    '<div class="filerow">' +
+    '<input class="fname" data-i="' + i + '" value="' + esc(f.name) + '">' +
+    '<span class="fsize">' + Math.max(1, Math.round(f.file.size / 1024)) + " KB</span>" +
+    '<button class="x" data-drop="' + i + '" title="Take it off">\u00d7</button>' +
+    "</div>"
+  ).join("");
+}
+
+function renderFiles() {
+  const box = document.getElementById("fileBox");
+  if (!box) return;
+  box.innerHTML = fileRows();
+  for (const inp of box.querySelectorAll(".fname")) {
+    // Renamed BEFORE anything is uploaded, so what lands in the book is the name
+    // you actually wanted rather than IMG_4821.
+    inp.oninput = () => {
+      sheet.files[Number(inp.dataset.i)].name = inp.value;
+    };
+  }
+  for (const b of box.querySelectorAll("button[data-drop]")) {
+    b.onclick = () => {
+      sheet.files.splice(Number(b.dataset.drop), 1);
+      renderFiles();
+    };
+  }
+}
+
+function addFiles(list) {
+  for (const file of list) {
+    if (!file || !file.size) continue;
+    sheet.files.push({ file, name: baseName(file.name) });
+  }
+  renderFiles();
+}
+
+function openQuickJob() {
+  sheet = {
+    quick: true,
+    jobId: null,
+    newSite: true,
+    clientId: null,
+    clientName: "",
+    supervisorId: null,
+    supervisors: [],
+    address: "",
+    lot: "",
+    builderQuery: "",
+    addingSupervisor: false,
+    newSupervisorName: "",
+    files: [],
+  };
+
+  const veil = document.createElement("div");
+  veil.className = "veil";
+  veil.innerHTML = '<div class="sheet">' +
+    "<h2>New job</h2>" +
+    '<div class="when">The site and its plans. Book a visit onto it later.</div>' +
+    '<div id="siteBlock"></div>' +
+    "<label>Files</label>" +
+    '<div id="drop" class="drop">Drop files here, or <button class="linkish" id="pick">choose them</button>' +
+    '<input id="fileInput" type="file" multiple hidden></div>' +
+    '<div id="fileBox"></div>' +
+    '<div class="problem" id="prob"></div>' +
+    '<div class="actions">' +
+    '<button id="cancel">Cancel</button>' +
+    '<button id="save" class="primary">Add job</button>' +
+    "</div>" +
+    "</div>";
+  document.body.appendChild(veil);
+
+  veil.addEventListener("click", (ev) => {
+    if (ev.target === veil) closeSheet();
+  });
+  document.getElementById("cancel").onclick = closeSheet;
+  document.getElementById("save").onclick = saveQuickJob;
+
+  const input = document.getElementById("fileInput");
+  document.getElementById("pick").onclick = () => input.click();
+  input.onchange = () => {
+    addFiles(input.files);
+    input.value = "";
+  };
+
+  const drop = document.getElementById("drop");
+  for (const ev of ["dragenter", "dragover"]) {
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      drop.classList.add("over");
+    });
+  }
+  for (const ev of ["dragleave", "drop"]) {
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      drop.classList.remove("over");
+    });
+  }
+  drop.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+
+  renderSiteBlock();
+  renderFiles();
+}
+
+async function uploadOne(jobId, entry, prob, n, total) {
+  if (prob) prob.textContent = `Sending ${n} of ${total}\u2026`;
+  const started = await post({
+    action: "uploadUrl",
+    jobId,
+    filename: entry.file.name,
+    mime: entry.file.type || "application/octet-stream",
+  });
+  if (started.body.problem) throw new Error(started.body.problem);
+
+  // Straight to Storage on the signed URL — the bytes never touch the function.
+  const put = await fetch(started.body.signedUrl, {
+    method: "PUT",
+    headers: { "content-type": entry.file.type || "application/octet-stream" },
+    body: entry.file,
+  });
+  if (!put.ok) throw new Error(`${entry.name} did not upload`);
+
+  const rec = await post({
+    action: "recordFile",
+    jobId,
+    path: started.body.path,
+    name: entry.name,
+    sha256: await sha256Hex(entry.file),
+    size: entry.file.size,
+    mime: entry.file.type || "application/octet-stream",
+  });
+  if (rec.body.problem) throw new Error(rec.body.problem);
+  return rec.body.duplicate;
+}
+
+async function saveQuickJob() {
+  const btn = document.getElementById("save");
+  const prob = document.getElementById("prob");
+  btn.disabled = true;
+  prob.textContent = "";
+  try {
+    stashSite();
+    if (!sheet.clientId) {
+      prob.textContent = "Pick the builder, or add them if they are new.";
+      return;
+    }
+    if (!(sheet.address || "").trim()) {
+      prob.textContent = "A site needs an address.";
+      return;
+    }
+
+    const made = await post({
+      action: "createSite",
+      client: sheet.clientName,
+      clientId: sheet.clientId,
+      supervisorId: sheet.supervisorId,
+      address: sheet.address,
+      lot: sheet.lot,
+    });
+    if (made.body.problem) {
+      prob.textContent = made.body.problem;
+      return;
+    }
+    const jobId = made.body.jobId;
+
+    // The site is saved by this point. A file that fails to send is reported
+    // with the job already safely in the book, never rolled back on top of it.
+    let sent = 0, dupes = 0;
+    for (let i = 0; i < sheet.files.length; i++) {
+      const dup = await uploadOne(jobId, sheet.files[i], prob, i + 1, sheet.files.length);
+      sent++;
+      if (dup) dupes++;
+    }
+
+    const what = made.body.reused ? "Site already in the book" : "Job added";
+    const files = sent ? ` with ${sent} file${sent === 1 ? "" : "s"}` : "";
+    const dupNote = dupes ? ` (${dupes} already on it)` : "";
+    closeSheet();
+    note(`${what}${files}${dupNote}. Book it by tapping a square.`);
+  } catch (e) {
+    prob.textContent = (e && e.message) || "Could not save that.";
+  } finally {
+    const b = document.getElementById("save");
+    if (b) b.disabled = false;
+  }
+}
+
 // ── adding a site and a visit ─────────────────────────────────────────────
 //
 // A JOB IS A SITE, A BOOKING IS A VISIT to it. One address gets undergrounds
@@ -695,9 +949,9 @@ function closeSheet() {
 function openSheet(cell) {
   // cell === null means the button at the top rather than a tap on a square:
   // there is no day and nobody implied, so both become fields.
-  const free = cell === null;
-  const day = free ? "" : (grid.days.find((d) => d.iso === cell.day) || {}).label || cell.day;
-  const who = free ? "" : cell.resourceId === null
+  const free = false;
+  const day = (grid.days.find((d) => d.iso === cell.day) || {}).label || cell.day;
+  const who = cell.resourceId === null
     ? "Unallocated"
     : (grid.rows.find((r) => r.resourceId === cell.resourceId) || {}).name || "";
   sheet = {
@@ -705,7 +959,7 @@ function openSheet(cell) {
     free,
     jobId: null,
     siteLabel: "",
-    newSite: free,
+    newSite: false,
     clientId: null,
     clientName: "",
     supervisorId: null,
@@ -715,24 +969,12 @@ function openSheet(cell) {
     builderQuery: "",
   };
 
-  const first = grid.days[0].iso, last = grid.days[grid.days.length - 1].iso;
-  const today = (grid.days.find((d) => d.isToday) || {}).iso;
-  const whenBlock = free
-    ? '<label for="dy">Day</label>' +
-      '<input id="dy" type="date" value="' + (today || first) + '" min="' + first + '" max="' + last + '">' +
-      '<label for="who">Who is on it</label>' +
-      '<select id="who"><option value="">Unallocated for now</option>' +
-      grid.rows.map((r) => '<option value="' + esc(r.resourceId) + '">' + esc(r.name) + "</option>").join("") +
-      "</select>"
-    : "";
 
   const veil = document.createElement("div");
   veil.className = "veil";
   veil.innerHTML = '<div class="sheet">' +
-    "<h2>" + (free ? "New job" : "Add a job") + "</h2>" +
-    (free
-      ? '<div class="when">Anywhere in these three weeks</div>'
-      : '<div class="when">' + esc(day) + " \u00b7 " + esc(who) + "</div>") +
+    "<h2>Add a job</h2>" +
+    '<div class="when">' + esc(day) + " \u00b7 " + esc(who) + "</div>" +
     '<div id="siteBlock"></div>' +
     '<label for="wt">Work</label>' +
     '<select id="wt">' +
@@ -741,7 +983,6 @@ function openSheet(cell) {
     "</select>" +
     '<label for="tm">Start time \u2014 leave blank for all day</label>' +
     '<input id="tm" placeholder="07:00" inputmode="numeric">' +
-    whenBlock +
     '<div class="problem" id="prob"></div>' +
     '<div class="actions">' +
     '<button id="cancel">Cancel</button>' +
@@ -1070,11 +1311,8 @@ async function saveSheet() {
     // From a tapped square the day and the person are already decided; from the
     // button at the top they are fields, and "Unallocated for now" is a real
     // answer rather than a missing one.
-    const day = sheet.free ? document.getElementById("dy").value : sheet.cell.day;
-    const resourceId = sheet.free
-      ? (document.getElementById("who").value || null)
-      : sheet.cell.resourceId;
-    if (!day) { prob.textContent = "Pick a day."; return; }
+    const day = sheet.cell.day;
+    const resourceId = sheet.cell.resourceId;
 
     const made = await post({
       action: "createBooking",
@@ -1205,7 +1443,7 @@ document.getElementById("now").onclick = () => {
   load();
 };
 document.getElementById("add").onclick = () => {
-  if (!loading && !crewSheet && !sheet) openSheet(null);
+  if (!loading && !crewSheet && !sheet) openQuickJob();
 };
 load();
 </script>
