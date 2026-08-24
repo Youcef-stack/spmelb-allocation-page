@@ -1,0 +1,312 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Allocation</title>
+<style>
+:root {
+  --line: #d8dade;
+  --head: #f6f7f8;
+  --ink: #1d1d1f;
+  --muted: #86868b;
+  --weekend: #eceef0;
+  --today: #fff8dc;
+  --unalloc: #efedfb;
+  --link: #0071e3;
+  --paper: #ffffff;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+header {
+  padding: 16px 20px 6px;
+}
+h1 {
+  font-size: 19px;
+  font-weight: 600;
+  margin: 0 0 2px;
+  letter-spacing: -0.01em;
+}
+.sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+nav {
+  padding: 0 20px 12px;
+  display: flex;
+  gap: 4px;
+}
+nav button {
+  background: none;
+  border: 0;
+  color: var(--link);
+  cursor: pointer;
+  font: inherit;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+nav button:hover {
+  background: #f0f0f2;
+}
+nav button:disabled {
+  color: var(--muted);
+  cursor: default;
+  background: none;
+}
+.scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 100%;
+}
+th,
+td {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+td {
+  vertical-align: top;
+  padding: 6px;
+}
+thead th {
+  background: var(--head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-align: left;
+  white-space: nowrap;
+  padding: 8px 6px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border-top: 1px solid var(--line);
+}
+.who {
+  min-width: 168px;
+  max-width: 168px;
+  padding: 8px 10px;
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--paper);
+  z-index: 2;
+  font-weight: 600;
+  border-left: 1px solid var(--line);
+}
+thead .who {
+  z-index: 4;
+  background: var(--head);
+}
+.day {
+  min-width: 152px;
+}
+.weekend {
+  background: var(--weekend);
+}
+.today {
+  background: var(--today);
+}
+tbody tr:first-child .who,
+tbody tr:first-child td {
+  background: var(--unalloc);
+}
+.count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.empty {
+  color: var(--muted);
+  text-align: center;
+}
+.card {
+  border: 1px solid;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 5px;
+  background: var(--paper);
+}
+.card:last-child {
+  margin-bottom: 0;
+}
+.card b {
+  display: block;
+  font-size: 11px;
+  padding: 3px 6px;
+  font-weight: 600;
+}
+.card .body {
+  padding: 5px 6px;
+}
+.card .time {
+  font-variant-numeric: tabular-nums;
+}
+.card .where {
+  color: #1d4ed8;
+  margin-top: 1px;
+}
+.big {
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  padding-top: 10px;
+}
+.msg {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+</style>
+
+<header>
+  <h1 id="title">Allocation</h1>
+  <div class="sub">Times are Melbourne time.</div>
+</header>
+<nav>
+  <button id="prev">‹ Previous</button>
+  <button id="now">Current</button>
+  <button id="next">Next ›</button>
+</nav>
+<div class="scroll">
+  <div id="out" class="msg">Loading…</div>
+</div>
+
+<script>
+// The API. The token never reaches THIS host: it arrives in the fragment, which
+// browsers do not send to the server, so GitHub never sees it. It is passed on
+// only to Supabase.
+const API = "https://rkdfjhpjwaoqgsgadwem.supabase.co/functions/v1/allocation";
+
+// One colour per work type, echoing BaseApp's palette so the office reads the
+// board the way it always has.
+const COLOURS = {
+  undergrounds: "#4f7a5a",
+  maintenance: "#9c5470",
+  hook_ups: "#6f5a9c",
+  rectification: "#a3554e",
+  jackhammer: "#7d6347",
+  cctv: "#3f6a9c",
+  cctv_pre_slab: "#3f6a9c",
+  cctv_post_slab: "#3f6a9c",
+  site_inspection: "#5a7a7a",
+  checkmeasure: "#7a6a4f",
+  jetter: "#4f6a7a",
+  vba_inspection: "#6a4f7a",
+  water_meter_setup: "#4f7a7a",
+  supplier_delivery: "#7a5a4f",
+  haulage: "#5a5a5a",
+  other: "#6b7280",
+};
+
+const auth = new URLSearchParams(location.hash.slice(1));
+let offset = 0;
+let loading = false;
+
+const esc = (s) =>
+  String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function cardHtml(c) {
+  const colour = COLOURS[c.workType] || COLOURS.other;
+  const lot = c.lot ? "/" + esc(c.lot) : "";
+  // An all-day booking says so. It promised nobody a time, and printing an
+  // invented 7:00 AM here would put a made-up arrival window in front of a builder.
+  const time = c.startLabel ? esc(c.startLabel) : "All day";
+  return '<div class="card" style="border-color:' + colour + '">' +
+    '<b style="background:' + colour + "1f;color:" + colour + '">' +
+    (c.isLead ? "👑 " : "") + esc(c.label) + "</b>" +
+    '<div class="body"><div class="time">' + time + "</div>" +
+    '<div class="where">' + esc(c.client) + lot + " " + esc(c.address) + "</div>" +
+    "</div></div>";
+}
+
+function render(grid) {
+  const first = grid.days[0], last = grid.days[grid.days.length - 1];
+  document.getElementById("title").textContent = "Allocation: " + first.label + " – " + last.label;
+
+  const head = '<tr><th class="who">CONTRACTOR</th>' +
+    grid.days.map((d) =>
+      '<th class="day ' + (d.isWeekend ? "weekend " : "") + (d.isToday ? "today" : "") + '">' +
+      esc(d.label) + "</th>"
+    ).join("") + "</tr>";
+
+  const totalUnalloc = Object.values(grid.unallocated).reduce((a, b) => a + b, 0);
+  const unallocRow = '<tr><th class="who">Unallocated <span class="count">(' +
+    totalUnalloc + ")</span></th>" +
+    grid.days.map((d) => {
+      const n = grid.unallocated[d.iso] || 0;
+      return '<td class="' + (n ? "big" : "empty") + '">' + (n || "—") + "</td>";
+    }).join("") + "</tr>";
+
+  const rows = grid.rows.map((r) => {
+    const cells = grid.days.map((d) => {
+      const cards = r.cells[d.iso] || [];
+      const cls = (d.isWeekend ? "weekend " : "") + (d.isToday ? "today " : "") +
+        (cards.length ? "" : "empty");
+      return '<td class="' + cls + '">' +
+        (cards.length ? cards.map(cardHtml).join("") : "—") + "</td>";
+    }).join("");
+    return '<tr><th class="who">' + esc(r.name) +
+      ' <span class="count">(' + r.count + ")</span></th>" + cells + "</tr>";
+  }).join("");
+
+  const out = document.getElementById("out");
+  out.className = "";
+  out.innerHTML = "<table><thead>" + head + "</thead><tbody>" +
+    unallocRow + rows + "</tbody></table>";
+}
+
+function setBusy(busy) {
+  loading = busy;
+  for (const id of ["prev", "now", "next"]) document.getElementById(id).disabled = busy;
+}
+
+async function load() {
+  if (loading) return;
+  setBusy(true);
+  const out = document.getElementById("out");
+  out.className = "msg";
+  out.textContent = "Loading…";
+  const qs = new URLSearchParams({
+    u: auth.get("u") || "",
+    e: auth.get("e") || "",
+    s: auth.get("s") || "",
+    p: String(offset),
+  });
+  try {
+    const res = await fetch(API + "?" + qs);
+    const body = await res.json();
+    if (!res.ok) {
+      out.textContent = body.error || "That did not work.";
+      return;
+    }
+    render(body);
+  } catch (_) {
+    out.textContent = "Could not reach the schedule. Check your signal and try again.";
+  } finally {
+    setBusy(false);
+  }
+}
+
+document.getElementById("prev").onclick = () => {
+  offset--;
+  load();
+};
+document.getElementById("next").onclick = () => {
+  offset++;
+  load();
+};
+document.getElementById("now").onclick = () => {
+  offset = 0;
+  load();
+};
+load();
+</script>
