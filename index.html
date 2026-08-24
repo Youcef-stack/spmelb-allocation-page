@@ -561,6 +561,22 @@ th.who[data-row] {
 .rowtarget {
   box-shadow: inset 0 -3px 0 var(--link);
 }
+.rpt {
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--link);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.calloff {
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 10px;
+}
 </style>
 
 <header>
@@ -857,7 +873,10 @@ function bookingRowHtml(v, people) {
       esc(w.label) + "</option>"
     ).join("") +
     "</select>" +
-    '<button class="calloff" data-calloff="' + esc(v.id) + '">Call off</button>' +
+    '<button class="rpt" data-repeat="' + esc(v.id) +
+    '" title="Same again on the next working day">+</button>' +
+    '<button class="calloff" data-calloff="' + esc(v.id) +
+    '" title="Call this visit off">\u00d7</button>' +
     "</div>" +
 
     '<div class="brwhen">' +
@@ -896,9 +915,6 @@ async function openJobSheet(jobId) {
 
   const people = grid.rows;
   const lot = job.lot_number ? "/" + esc(job.lot_number) : "";
-  const visits = job.visits.length
-    ? job.visits.map((v) => bookingRowHtml(v, people)).join("")
-    : '<div class="nobody">No visits booked yet.</div>';
 
   const old = document.querySelector(".veil");
   if (old) old.remove();
@@ -908,7 +924,8 @@ async function openJobSheet(jobId) {
     "<h2>" + esc(job.client) + lot + "</h2>" +
     '<div class="when">' + esc(job.address) +
     (job.supervisor ? " \u00b7 " + esc(job.supervisor) : "") + "</div>" +
-    "<label>Bookings</label>" + visits +
+    "<label>Bookings</label>" +
+    '<div id="bookingsBox"></div>' +
     '<button class="linkish" id="addvisit">+ Add a visit</button>' +
     livePanelHtml() +
     '<div class="problem" id="prob"></div>' +
@@ -920,9 +937,31 @@ async function openJobSheet(jobId) {
     if (ev.target === veil) closeJobSheet();
   });
   document.getElementById("cancel").onclick = closeJobSheet;
-  wireBookingRows(jobId);
   document.getElementById("addvisit").onclick = () => addVisit(jobId);
+  paintBookings(job, jobId);
   wireLivePanel(jobId);
+}
+
+function paintBookings(job, jobId) {
+  const box = document.getElementById("bookingsBox");
+  if (!box) return;
+  box.innerHTML = job.visits.length
+    ? job.visits.map((v) => bookingRowHtml(v, grid.rows)).join("")
+    : '<div class="nobody">No visits booked yet.</div>';
+  wireBookingRows(jobId);
+}
+
+/** Re-read the job and repaint ONLY the bookings block.
+ *
+ *  Closing the whole sheet and reopening it made the screen go blank for a beat
+ *  every time anything was saved — the veil came off, the board showed through,
+ *  and the sheet came back. Nothing is torn down now. */
+async function refreshBookings(jobId) {
+  try {
+    const res = await fetch(API + "?" + authQuery({ job: jobId }));
+    const job = (await res.json()).job;
+    if (job) paintBookings(job, jobId);
+  } catch (_) { /* the sheet keeps what it has rather than emptying */ }
 }
 
 function closeJobSheet() {
@@ -943,8 +982,7 @@ async function jobAction(jobId, body) {
     // The board behind the sheet moves too — a visit rescheduled here has to
     // leave its old square.
     if (res.body.grid) render(res.body.grid);
-    closeJobSheet();
-    await openJobSheet(jobId);
+    await refreshBookings(jobId);
     return true;
   } catch (_) {
     if (prob) prob.textContent = "Could not save that.";
@@ -969,6 +1007,9 @@ function wireBookingRows(jobId) {
   }
   for (const b of document.querySelectorAll("button[data-calloff]")) {
     b.onclick = () => jobAction(jobId, { action: "cancelBooking", bookingId: b.dataset.calloff });
+  }
+  for (const b of document.querySelectorAll("button[data-repeat]")) {
+    b.onclick = () => jobAction(jobId, { action: "repeatBooking", bookingId: b.dataset.repeat });
   }
   for (const b of document.querySelectorAll(".chip button[data-off]")) {
     b.onclick = () =>
