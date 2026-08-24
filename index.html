@@ -592,6 +592,14 @@ th.who[data-row] {
 .where[data-jobfile]:hover {
   text-decoration: underline;
 }
+.warn {
+  color: #a3554e;
+  font-weight: 600;
+}
+input.missing {
+  border-color: #e3c9c5;
+  background: #fdf6f5;
+}
 </style>
 
 <header>
@@ -862,6 +870,7 @@ async function searchJobs(q) {
 }
 
 let jobSheet = null; // the job whose sheet is open
+let jobSupervisors = [];
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -940,6 +949,15 @@ async function openJobSheet(jobId) {
   }
   jobSheet = jobId;
 
+  // That builder's own supervisors, for the change picker.
+  jobSupervisors = [];
+  if (job.client_id) {
+    try {
+      const r = await fetch(API + "?" + authQuery({ supervisors: job.client_id }));
+      jobSupervisors = (await r.json()).supervisors || [];
+    } catch (_) { /* the picker just shows nobody to swap to */ }
+  }
+
   const people = grid.rows;
   const lot = job.lot_number ? "/" + esc(job.lot_number) : "";
 
@@ -951,6 +969,7 @@ async function openJobSheet(jobId) {
     "<h2>" + esc(job.client) + lot + "</h2>" +
     '<div class="when">' + esc(job.address) +
     (job.supervisor ? " \u00b7 " + esc(job.supervisor) : "") + "</div>" +
+    '<div id="supBox"></div>' +
     "<label>Bookings</label>" +
     '<div id="bookingsBox"></div>' +
     '<button class="linkish" id="addvisit">+ Add a visit</button>' +
@@ -973,6 +992,56 @@ async function openJobSheet(jobId) {
 /** Its own section, listing EVERY report on the job in the order the work
  *  happened — including one whose visit was later called off, because the visit
  *  went away and the work did not. */
+
+/** Who the reports actually go to.
+ *
+ *  The pack is EMAILED to the supervisor. A missing address sends the builder's
+ *  report to the owner instead, without saying so — so the gap is shown here in
+ *  red, where it is noticed, and can be filled in on the spot. */
+function supervisorHtml(job) {
+  if (!job.supervisorId) {
+    return "<label>Site supervisor</label>" +
+      '<div class="nobody">Nobody on this site yet.</div>' +
+      '<select id="setsup"><option value="">Put somebody on\u2026</option>' +
+      (jobSupervisors || []).map((v) =>
+        '<option value="' + esc(v.id) + '">' + esc(v.name) + "</option>").join("") +
+      "</select>";
+  }
+  const noEmail = !job.supervisorEmail;
+  return "<label>Site supervisor</label>" +
+    '<div class="crewrow"><span class="nm">' + esc(job.supervisor) + "</span>" +
+    '<select id="setsup"><option value="' + esc(job.supervisorId) + '">Change\u2026</option>' +
+    (jobSupervisors || []).filter((v) => v.id !== job.supervisorId).map((v) =>
+      '<option value="' + esc(v.id) + '">' + esc(v.name) + "</option>").join("") +
+    "</select></div>" +
+    '<label for="supemail">Email' + (noEmail ? ' \u2014 <span class="warn">reports go to you without this</span>' : "") +
+    "</label>" +
+    '<input id="supemail" class="' + (noEmail ? "missing" : "") + '" placeholder="name@builder.com.au" value="' +
+    esc(job.supervisorEmail || "") + '">' +
+    '<label for="supphone">Phone</label>' +
+    '<input id="supphone" placeholder="04.." value="' + esc(job.supervisorPhone || "") + '">';
+}
+
+function wireSupervisor(job, jobId) {
+  const email = document.getElementById("supemail");
+  if (email) {
+    email.onchange = () =>
+      jobAction(jobId, { action: "updateSupervisor", supervisorId: job.supervisorId, email: email.value });
+  }
+  const phone = document.getElementById("supphone");
+  if (phone) {
+    phone.onchange = () =>
+      jobAction(jobId, { action: "updateSupervisor", supervisorId: job.supervisorId, phone: phone.value });
+  }
+  const set = document.getElementById("setsup");
+  if (set) {
+    set.onchange = () => {
+      if (set.value === job.supervisorId) return;
+      jobAction(jobId, { action: "setJobSupervisor", jobId, supervisorId: set.value });
+    };
+  }
+}
+
 function reportsHtml(job) {
   const reports = [...(job.reports || [])]
     .sort((a, b) => (a.day || "").localeCompare(b.day || ""));
@@ -1002,6 +1071,11 @@ function paintBookings(job, jobId) {
     : '<div class="nobody">No visits booked yet.</div>';
   const rb = document.getElementById("reportsBox");
   if (rb) rb.innerHTML = reportsHtml(job);
+  const sb = document.getElementById("supBox");
+  if (sb) {
+    sb.innerHTML = supervisorHtml(job);
+    wireSupervisor(job, jobId);
+  }
   wireBookingRows(jobId);
 }
 
