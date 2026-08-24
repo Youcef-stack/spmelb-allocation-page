@@ -362,6 +362,11 @@ td.target {
   margin-left: auto;
   font-weight: 600;
 }
+.inlineact {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
 </style>
 
 <header>
@@ -764,6 +769,17 @@ function stashSite() {
 }
 
 function supervisorBlock() {
+  // Inline, not prompt(): a browser dialog sits outside the sheet's own look and
+  // some mobile browsers suppress it outright, which fails silently.
+  if (sheet.addingSupervisor) {
+    return '<label for="svnew">New site supervisor</label>' +
+      '<input id="svnew" placeholder="Joe De Cata" autocomplete="off" value="' +
+      esc(sheet.newSupervisorName || "") + '">' +
+      '<div class="inlineact">' +
+      '<button class="linkish" id="svsave">Add them</button>' +
+      '<button class="linkish" id="svcancel">Cancel</button>' +
+      "</div>";
+  }
   const list = sheet.supervisors || [];
   return '<label for="sv">Site supervisor</label>' +
     '<select id="sv"><option value="">Not known yet</option>' +
@@ -784,6 +800,8 @@ function wireSiteFields() {
       sheet.clientName = "";
       sheet.supervisorId = null;
       sheet.supervisors = [];
+      sheet.addingSupervisor = false;
+      sheet.newSupervisorName = "";
       renderSiteBlock();
     };
   }
@@ -803,12 +821,34 @@ function wireSiteFields() {
   if (sv) {
     sv.onchange = () => {
       if (sv.value === "__new") {
-        const name = prompt("Name of the site supervisor");
         sv.value = sheet.supervisorId || "";
-        if (name) addSupervisor(name);
+        sheet.addingSupervisor = true;
+        sheet.newSupervisorName = "";
+        renderSiteBlock();
+        const box = document.getElementById("svnew");
+        if (box) box.focus();
         return;
       }
       sheet.supervisorId = sv.value || null;
+    };
+  }
+
+  const svnew = document.getElementById("svnew");
+  if (svnew) {
+    svnew.oninput = () => {
+      sheet.newSupervisorName = svnew.value;
+    };
+    svnew.onkeydown = (ev) => {
+      if (ev.key !== "Enter") return;
+      // Enter here would otherwise submit the whole job with a half-typed name.
+      ev.preventDefault();
+      addSupervisor(svnew.value);
+    };
+    document.getElementById("svsave").onclick = () => addSupervisor(svnew.value);
+    document.getElementById("svcancel").onclick = () => {
+      sheet.addingSupervisor = false;
+      sheet.newSupervisorName = "";
+      renderSiteBlock();
     };
   }
 }
@@ -871,8 +911,16 @@ async function addSupervisor(name) {
     if (prob) prob.textContent = res.body.problem;
     return;
   }
-  sheet.supervisors = (sheet.supervisors || []).concat([{ id: res.body.supervisorId, name: res.body.name }]);
+  // Reused on a name match rather than duplicated, so this is safe to press twice.
+  if (!(sheet.supervisors || []).some((v) => v.id === res.body.supervisorId)) {
+    sheet.supervisors = (sheet.supervisors || []).concat([{
+      id: res.body.supervisorId,
+      name: res.body.name,
+    }]);
+  }
   sheet.supervisorId = res.body.supervisorId;
+  sheet.addingSupervisor = false;
+  sheet.newSupervisorName = "";
   renderSiteBlock();
 }
 
