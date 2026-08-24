@@ -695,7 +695,20 @@ function openSheet(cell) {
   const who = free ? "" : cell.resourceId === null
     ? "Unallocated"
     : (grid.rows.find((r) => r.resourceId === cell.resourceId) || {}).name || "";
-  sheet = { cell, free, jobId: null, siteLabel: "", newSite: free };
+  sheet = {
+    cell,
+    free,
+    jobId: null,
+    siteLabel: "",
+    newSite: free,
+    clientId: null,
+    clientName: "",
+    supervisorId: null,
+    supervisors: [],
+    address: "",
+    lot: "",
+    builderQuery: "",
+  };
 
   const first = grid.days[0].iso, last = grid.days[grid.days.length - 1].iso;
   const today = (grid.days.find((d) => d.isToday) || {}).iso;
@@ -740,6 +753,129 @@ function openSheet(cell) {
   renderSiteBlock();
 }
 
+
+/** Keep what has been typed across a re-render — the block is rebuilt whenever a
+ *  builder is picked, and losing a half-typed address to that is maddening. */
+function stashSite() {
+  const g = (id) => (document.getElementById(id) || {}).value;
+  if (g("ad") !== undefined) sheet.address = g("ad");
+  if (g("lt") !== undefined) sheet.lot = g("lt");
+  if (g("bq") !== undefined) sheet.builderQuery = g("bq");
+}
+
+function supervisorBlock() {
+  const list = sheet.supervisors || [];
+  return '<label for="sv">Site supervisor</label>' +
+    '<select id="sv"><option value="">Not known yet</option>' +
+    list.map((v) =>
+      '<option value="' + esc(v.id) + '"' + (sheet.supervisorId === v.id ? " selected" : "") + ">" +
+      esc(v.name) + "</option>"
+    ).join("") +
+    '<option value="__new">Add a new one\u2026</option>' +
+    "</select>";
+}
+
+function wireSiteFields() {
+  const changeBuilder = document.getElementById("changeBuilder");
+  if (changeBuilder) {
+    changeBuilder.onclick = () => {
+      stashSite();
+      sheet.clientId = null;
+      sheet.clientName = "";
+      sheet.supervisorId = null;
+      sheet.supervisors = [];
+      renderSiteBlock();
+    };
+  }
+
+  const bq = document.getElementById("bq");
+  if (bq) {
+    bq.oninput = (ev) => {
+      clearTimeout(findTimer);
+      sheet.builderQuery = ev.target.value;
+      findTimer = setTimeout(() => searchBuilders(ev.target.value), 220);
+    };
+    const nb = document.getElementById("newBuilder");
+    if (nb) nb.onclick = () => addBuilder(bq.value);
+  }
+
+  const sv = document.getElementById("sv");
+  if (sv) {
+    sv.onchange = () => {
+      if (sv.value === "__new") {
+        const name = prompt("Name of the site supervisor");
+        sv.value = sheet.supervisorId || "";
+        if (name) addSupervisor(name);
+        return;
+      }
+      sheet.supervisorId = sv.value || null;
+    };
+  }
+}
+
+async function searchBuilders(q) {
+  const hits = document.getElementById("bhits");
+  if (!hits) return;
+  if (q.trim().length < 2) {
+    hits.hidden = true;
+    return;
+  }
+  try {
+    const res = await fetch(API + "?" + authQuery({ builders: q }));
+    const list = (await res.json()).builders || [];
+    hits.hidden = false;
+    hits.innerHTML = list.length
+      ? list.map((c) =>
+        '<div data-client="' + esc(c.id) + '" data-name="' + esc(c.name) + '">' + esc(c.name) +
+        (c.short_name ? '<div class="sub2">' + esc(c.short_name) + "</div>" : "") + "</div>"
+      ).join("")
+      : '<div class="sub2" style="padding:7px 9px">No builder by that name \u2014 use "This builder is new".</div>';
+    for (const el of hits.querySelectorAll("div[data-client]")) {
+      el.onclick = () => pickBuilder(el.dataset.client, el.dataset.name);
+    }
+  } catch (_) {
+    hits.hidden = true;
+  }
+}
+
+async function pickBuilder(clientId, name) {
+  stashSite();
+  sheet.clientId = clientId;
+  sheet.clientName = name;
+  sheet.supervisorId = null;
+  sheet.supervisors = [];
+  renderSiteBlock();
+  try {
+    const res = await fetch(API + "?" + authQuery({ supervisors: clientId }));
+    sheet.supervisors = (await res.json()).supervisors || [];
+    renderSiteBlock();
+  } catch (_) { /* the picker still works with none listed */ }
+}
+
+async function addBuilder(name) {
+  const prob = document.getElementById("prob");
+  stashSite();
+  const res = await post({ action: "createBuilder", name });
+  if (res.body.problem) {
+    if (prob) prob.textContent = res.body.problem;
+    return;
+  }
+  pickBuilder(res.body.clientId, res.body.name);
+}
+
+async function addSupervisor(name) {
+  const prob = document.getElementById("prob");
+  stashSite();
+  const res = await post({ action: "createSupervisor", clientId: sheet.clientId, name });
+  if (res.body.problem) {
+    if (prob) prob.textContent = res.body.problem;
+    return;
+  }
+  sheet.supervisors = (sheet.supervisors || []).concat([{ id: res.body.supervisorId, name: res.body.name }]);
+  sheet.supervisorId = res.body.supervisorId;
+  renderSiteBlock();
+}
+
 function renderSiteBlock() {
   const b = document.getElementById("siteBlock");
   if (!b) return;
@@ -757,14 +893,34 @@ function renderSiteBlock() {
   }
 
   if (sheet.newSite) {
-    b.innerHTML = '<label for="cl">Builder</label><input id="cl" placeholder="MAC Living">' +
-      '<label for="ad">Address</label><input id="ad" placeholder="5 Savona Way, Manor Lakes">' +
-      '<label for="lt">Lot number \u2014 optional</label><input id="lt" placeholder="20410">' +
+    // The builder is PICKED from the 154 already on file, not typed. A free-text
+    // name never joins `clients`, so the site loses its link to the builder and
+    // to the supervisor paired with them — and the same builder ends up in the
+    // book three times with three spellings.
+    const builderBlock = sheet.clientId
+      ? "<label>Builder</label>" +
+        '<div class="results"><div class="on">' + esc(sheet.clientName) + "</div></div>" +
+        '<button class="linkish" id="changeBuilder">Choose a different builder</button>' +
+        supervisorBlock()
+      : '<label for="bq">Builder</label>' +
+        '<input id="bq" placeholder="Start typing the builder" autocomplete="off" value="' +
+        esc(sheet.builderQuery || "") + '">' +
+        '<div class="results" id="bhits" hidden></div>' +
+        '<button class="linkish" id="newBuilder">This builder is new</button>';
+
+    b.innerHTML = builderBlock +
+      '<label for="ad">Address</label><input id="ad" placeholder="5 Savona Way, Manor Lakes" value="' +
+      esc(sheet.address || "") + '">' +
+      '<label for="lt">Lot number \u2014 optional</label><input id="lt" placeholder="20410" value="' +
+      esc(sheet.lot || "") + '">' +
       '<button class="linkish" id="findInstead">Find an existing site instead</button>';
+
     document.getElementById("findInstead").onclick = () => {
+      stashSite();
       sheet.newSite = false;
       renderSiteBlock();
     };
+    wireSiteFields();
     return;
   }
 
@@ -843,11 +999,18 @@ async function saveSheet() {
         prob.textContent = "Pick a site, or add a new one.";
         return;
       }
+      stashSite();
+      if (!sheet.clientId) {
+        prob.textContent = "Pick the builder, or add them if they are new.";
+        return;
+      }
       const made = await post({
         action: "createSite",
-        client: (document.getElementById("cl") || {}).value || "",
-        address: (document.getElementById("ad") || {}).value || "",
-        lot: (document.getElementById("lt") || {}).value || "",
+        client: sheet.clientName,
+        clientId: sheet.clientId,
+        supervisorId: sheet.supervisorId,
+        address: sheet.address,
+        lot: sheet.lot,
       });
       if (made.body.problem) {
         prob.textContent = made.body.problem;
