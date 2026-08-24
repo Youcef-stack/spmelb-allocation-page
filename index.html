@@ -311,6 +311,53 @@ td.target {
   cursor: pointer;
   padding: 4px 0;
 }
+.card b {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.more {
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: .65;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.more:hover {
+  opacity: 1;
+}
+.crewrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.crewrow:last-child {
+  border-bottom: 0;
+}
+.crewrow .nm {
+  flex: 1;
+}
+.crewrow button {
+  font: inherit;
+  font-size: 12px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.crewrow button.x {
+  color: #a3554e;
+  border-color: #e3c9c5;
+}
+.nobody {
+  color: var(--muted);
+  padding: 8px 0;
+}
 </style>
 
 <header>
@@ -323,7 +370,7 @@ td.target {
   <button id="next">Next ›</button>
 </nav>
 <div class="hint"
-  id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one.</div>
+  id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one, or \u22ef on a job to change its crew.</div>
 <div class="scroll">
   <div id="out" class="msg">Loading…</div>
 </div>
@@ -364,7 +411,6 @@ const esc = (s) =>
 
 let grid = null; // the last grid the API gave us
 let picked = null; // {bookingId, resourceId, day} — tap-then-tap
-const expanded = new Set(); // Unallocated days shown as cards rather than a count
 
 function cardHtml(c, cell) {
   const colour = COLOURS[c.workType] || COLOURS.other;
@@ -380,7 +426,9 @@ function cardHtml(c, cell) {
     ' data-booking="' + esc(c.bookingId) + '"' +
     ' style="border-color:' + colour + '">' +
     '<b style="background:' + colour + "1f;color:" + colour + '">' +
-    (c.isLead ? "\u{1F451} " : "") + esc(c.label) + "</b>" +
+    "<span>" + (c.isLead ? "\u{1F451} " : "") + esc(c.label) + "</span>" +
+    '<span class="more" data-more="' + esc(c.bookingId) + '" title="Crew">\u22ef</span>' +
+    "</b>" +
     '<div class="body"><div class="time">' + time + "</div>" +
     '<div class="where">' + esc(c.client) + lot + " " + esc(c.address) + "</div>" +
     "</div></div>";
@@ -411,12 +459,9 @@ function render(g) {
     g.days.map((d) => {
       const cards = g.unallocated[d.iso] || [];
       const base = (d.isWeekend ? "weekend " : "") + (d.isToday ? "today " : "");
-      // Collapsed to a count by default, the way BaseApp shows it — but it has
-      // to be openable, because this row is where unassigned work is picked up.
-      if (cards.length && !expanded.has(d.iso)) {
-        return '<td class="' + base + 'big" data-expand="' + d.iso + '" data-day="' + d.iso +
-          '" data-unallocated="1">' + cards.length + "</td>";
-      }
+      // The cards, ALWAYS — never a bare count you have to know to tap. This row
+      // is the to-do list of work nobody is on yet, and hiding it behind a
+      // gesture nobody discovers is the same as not having it at all.
       return cellHtml(cards, null, d.iso, base);
     }).join("") + "</tr>";
 
@@ -517,6 +562,108 @@ async function move(bookingId, from, to) {
     note("Could not save that move. Check your signal.");
   } finally {
     setBusy(false);
+  }
+}
+
+// ── the crew on a booking ─────────────────────────────────────────────────
+//
+// A booking sits on EVERY allocated person's row, so this is reachable from any
+// copy of the card and always shows the WHOLE crew, not just the row you tapped.
+
+let crewSheet = null; // bookingId
+
+function findCard(bookingId) {
+  for (const day of Object.keys(grid.unallocated)) {
+    const hit = (grid.unallocated[day] || []).find((c) => c.bookingId === bookingId);
+    if (hit) return hit;
+  }
+  for (const r of grid.rows) {
+    for (const day of Object.keys(r.cells)) {
+      const hit = r.cells[day].find((c) => c.bookingId === bookingId);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+function openCrewSheet(bookingId) {
+  const c = findCard(bookingId);
+  if (!c) {
+    note("That booking is gone — reload the board.");
+    return;
+  }
+  crewSheet = bookingId;
+
+  const onJob = new Set(c.crew.map((m) => m.resourceId));
+  const spare = grid.rows.filter((r) => !onJob.has(r.resourceId));
+  const lot = c.lot ? "/" + esc(c.lot) : "";
+
+  const crewHtml = c.crew.length
+    ? c.crew.map((m) =>
+      '<div class="crewrow"><span class="nm">' + (m.isLead ? "\u{1F451} " : "") + esc(m.name) +
+      "</span>" +
+      (m.isLead ? "" : '<button data-lead="' + esc(m.resourceId) + '">Make lead</button>') +
+      '<button class="x" data-off="' + esc(m.resourceId) + '" title="Take them off">\u00d7</button>' +
+      "</div>"
+    ).join("")
+    : '<div class="nobody">Nobody on this yet.</div>';
+
+  const veil = document.createElement("div");
+  veil.className = "veil";
+  veil.innerHTML = '<div class="sheet">' +
+    "<h2>" + esc(c.label) + "</h2>" +
+    '<div class="when">' + esc(c.client) + lot + " " + esc(c.address) +
+    " \u00b7 " + (c.startLabel ? esc(c.startLabel) : "All day") + "</div>" +
+    "<label>Crew</label>" + crewHtml +
+    '<label for="addcrew">Put somebody else on</label>' +
+    '<select id="addcrew"><option value="">Choose\u2026</option>' +
+    spare.map((r) => '<option value="' + esc(r.resourceId) + '">' + esc(r.name) + "</option>").join("") +
+    "</select>" +
+    '<div class="problem" id="prob"></div>' +
+    '<div class="actions"><button id="cancel">Done</button></div>' +
+    "</div>";
+  document.body.appendChild(veil);
+
+  veil.addEventListener("click", (ev) => {
+    if (ev.target === veil) closeCrewSheet();
+  });
+  document.getElementById("cancel").onclick = closeCrewSheet;
+  document.getElementById("addcrew").onchange = (ev) => {
+    if (ev.target.value) crewAction("add", ev.target.value);
+  };
+  for (const b of veil.querySelectorAll("button[data-off]")) {
+    b.onclick = () => crewAction("remove", b.dataset.off);
+  }
+  for (const b of veil.querySelectorAll("button[data-lead]")) {
+    b.onclick = () => crewAction("lead", b.dataset.lead);
+  }
+}
+
+function closeCrewSheet() {
+  crewSheet = null;
+  const v = document.querySelector(".veil");
+  if (v) v.remove();
+}
+
+async function crewAction(what, resourceId) {
+  const bookingId = crewSheet;
+  const prob = document.getElementById("prob");
+  if (prob) prob.textContent = "";
+  try {
+    const res = await post({ action: "crew", bookingId, what, resourceId });
+    if (res.body.problem) {
+      if (prob) prob.textContent = res.body.problem;
+      return;
+    }
+    if (res.body.grid) {
+      render(res.body.grid);
+      // Reopened from the FRESH grid, so the list is what the table now holds
+      // rather than what it held when the sheet opened.
+      closeCrewSheet();
+      openCrewSheet(bookingId);
+    }
+  } catch (_) {
+    if (prob) prob.textContent = "Could not save that. Check your signal.";
   }
 }
 
@@ -754,10 +901,13 @@ document.addEventListener("drop", (ev) => {
 // on a phone. Same fallback report-edit uses for moving a photo.
 
 document.addEventListener("click", (ev) => {
-  const expand = ev.target.closest && ev.target.closest("td[data-expand]");
-  if (expand) {
-    expanded.add(expand.dataset.expand);
-    render(grid);
+  // The crew button comes first: it sits inside a card, and tapping it must not
+  // also pick the card up for a move.
+  const more = ev.target.closest && ev.target.closest("[data-more]");
+  if (more) {
+    ev.stopPropagation();
+    picked = null;
+    openCrewSheet(more.dataset.more);
     return;
   }
 
@@ -787,12 +937,13 @@ document.addEventListener("click", (ev) => {
   }
   // Nothing in hand, so an empty square is an invitation to add work there.
   // No per-cell button: 29 rows across 21 days is 609 of them.
-  if (!loading) openSheet(cellOf(td));
+  if (!loading && !crewSheet && !sheet) openSheet(cellOf(td));
 });
 
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  if (sheet) closeSheet();
+  if (crewSheet) closeCrewSheet();
+  else if (sheet) closeSheet();
   else if (picked) {
     picked = null;
     render(grid);
