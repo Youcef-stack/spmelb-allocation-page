@@ -654,8 +654,16 @@ function renderLiveFiles() {
     // On change, not on every keystroke — one write per rename, not per letter.
     inp.onchange = async () => {
       const res = await post({ action: "renameFile", fileId: inp.dataset.id, name: inp.value });
-      if (res.body.problem) note(res.body.problem);
-      else inp.value = res.body.name;
+      if (res.body.problem) {
+        note(res.body.problem);
+        return;
+      }
+      inp.value = res.body.name;
+      // The local list has to move too. Updating only the input meant the next
+      // re-render — removing another file, say — redrew the OLD name from stale
+      // state, so a saved rename looked like it had been thrown away.
+      const row = liveFiles.list.find((f) => f.id === inp.dataset.id);
+      if (row) row.name = res.body.name;
     };
   }
   for (const b of box.querySelectorAll("button[data-rm]")) {
