@@ -577,6 +577,15 @@ th.who[data-row] {
   line-height: 1;
   padding: 4px 10px;
 }
+.bookingrow.dead {
+  opacity: .62;
+  background: #fafafb;
+}
+.bookingrow.dead .nm {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
 </style>
 
 <header>
@@ -864,6 +873,17 @@ function bookingRowHtml(v, people) {
     '<span class="chip' + (isLead ? " lead" : "") + '">' + (isLead ? "\u{1F451} " : "") +
     esc(c.name) + '<button data-off="' + esc(c.resourceId) + '" data-b="' + esc(v.id) +
     '" title="Take them off">\u00d7</button></span>';
+
+  const dead = v.status === "cancelled";
+  if (dead) {
+    // Listed but inert: the only thing you can do to a called-off visit is put
+    // it back.
+    return '<div class="bookingrow dead" data-b="' + esc(v.id) + '">' +
+      '<div class="brtop"><span class="nm">' + esc(v.day || "") + " \u00b7 " +
+      esc(v.workType.replace(/_/g, " ")) + " \u2014 called off</span>" +
+      '<button class="rpt" data-calloff="' + esc(v.id) + '">Put it back</button></div>' +
+      "</div>";
+  }
 
   return '<div class="bookingrow" data-b="' + esc(v.id) + '">' +
     '<div class="brtop">' +
