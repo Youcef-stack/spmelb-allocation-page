@@ -514,6 +514,32 @@ td.off::after {
   padding: 3px 6px;
   font-size: 12px;
 }
+.times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.times button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+.times button:hover {
+  background: #f0f0f2;
+}
+.times button.on {
+  background: var(--link);
+  border-color: var(--link);
+  color: #fff;
+}
+.sheet input#tm {
+  margin-top: 7px;
+}
 .bookingrow textarea {
   width: 100%;
   font: inherit;
@@ -1651,6 +1677,55 @@ function closeSheet() {
   if (v) v.remove();
 }
 
+// The office books the same handful of starts all week — seven for a dig,
+// half six on a hot day, one o'clock for a second visit — so they are buttons
+// to hit rather than a time to type. "All day" is a real answer here, not an
+// empty field somebody forgot, and "Other" is the way out for the odd one.
+const START_TIMES = [
+  { v: "", label: "All day" },
+  { v: "06:30", label: "6:30" },
+  { v: "07:00", label: "7:00" },
+  { v: "07:30", label: "7:30" },
+  { v: "08:00", label: "8:00" },
+  { v: "13:00", label: "1 PM" },
+];
+
+function timeButtons() {
+  const picked = (v) => !sheet.timeOther && v === sheet.startTime;
+  return START_TIMES.map((t) =>
+    '<button type="button" data-time="' + esc(t.v) + '"' +
+    (picked(t.v) ? ' class="on"' : "") + ">" + esc(t.label) + "</button>"
+  ).join("") +
+    '<button type="button" data-time="other"' +
+    (sheet.timeOther ? ' class="on"' : "") + ">Other</button>";
+}
+
+function wireTimes() {
+  const row = document.getElementById("times");
+  const other = document.getElementById("tm");
+  row.onclick = (ev) => {
+    const b = ev.target.closest("button[data-time]");
+    if (!b) return;
+    if (b.dataset.time === "other") {
+      sheet.timeOther = true;
+      sheet.startTime = other.value;
+      other.hidden = false;
+      other.focus();
+    } else {
+      sheet.timeOther = false;
+      sheet.startTime = b.dataset.time;
+      other.value = "";
+      other.hidden = true;
+    }
+    row.innerHTML = timeButtons();
+  };
+  // type="time" only ever hands back HH:MM or nothing, which is exactly what
+  // the function accepts — there is no half-typed "7a" to police.
+  other.oninput = () => {
+    sheet.startTime = other.value;
+  };
+}
+
 function openSheet(cell) {
   // cell === null means the button at the top rather than a tap on a square:
   // there is no day and nobody implied, so both become fields.
@@ -1665,6 +1740,8 @@ function openSheet(cell) {
     jobId: null,
     siteLabel: "",
     newSite: false,
+    startTime: "07:00",
+    timeOther: false,
     clientId: null,
     clientName: "",
     supervisorId: null,
@@ -1686,8 +1763,9 @@ function openSheet(cell) {
     (grid.workTypes || []).map((w) => '<option value="' + esc(w.value) + '">' + esc(w.label) + "</option>")
       .join("") +
     "</select>" +
-    '<label for="tm">Start time \u2014 leave blank for all day</label>' +
-    '<input id="tm" placeholder="07:00" inputmode="numeric">' +
+    "<label>Start time</label>" +
+    '<div class="times" id="times">' + timeButtons() + "</div>" +
+    '<input id="tm" type="time" hidden>' +
     '<div class="problem" id="prob"></div>' +
     '<div class="actions">' +
     '<button id="cancel">Cancel</button>' +
@@ -1701,6 +1779,7 @@ function openSheet(cell) {
   });
   document.getElementById("cancel").onclick = closeSheet;
   document.getElementById("save").onclick = saveSheet;
+  wireTimes();
   renderSiteBlock();
 }
 
@@ -2009,15 +2088,25 @@ async function saveSheet() {
   btn.disabled = true;
   prob.textContent = "";
   try {
+    // Everything answerable without the network is answered first, so a
+    // half-filled sheet never leaves a new site behind on its way to a
+    // complaint.
+    if (!sheet.jobId && !sheet.newSite) {
+      prob.textContent = "Pick a site, or add a new one.";
+      return;
+    }
+    // Falling back to all day here is the failure the function refuses a bad
+    // time to avoid: a crew told nothing, from a box somebody meant to fill.
+    if (sheet.timeOther && !sheet.startTime) {
+      prob.textContent = "Pick a time, or choose All day.";
+      return;
+    }
+
     let jobId = sheet.jobId;
 
     // A new site is created first, then booked. If the site lands and the
     // booking does not, the site is still worth keeping — it is a real address.
     if (!jobId) {
-      if (!sheet.newSite) {
-        prob.textContent = "Pick a site, or add a new one.";
-        return;
-      }
       stashSite();
       if (!sheet.clientId) {
         prob.textContent = "Pick the builder, or add them if they are new.";
@@ -2049,7 +2138,7 @@ async function saveSheet() {
       jobId,
       workType: document.getElementById("wt").value,
       day,
-      startTime: document.getElementById("tm").value,
+      startTime: sheet.startTime,
       resourceId,
     });
     if (made.body.problem) {
