@@ -618,6 +618,111 @@ async function move(bookingId, from, to) {
   }
 }
 
+
+// ── files already on a job ────────────────────────────────────────────────
+//
+// Live, unlike the quick-add sheet's list: the job exists, so a dropped file
+// uploads straight away and a rename or a removal takes effect immediately.
+
+let liveFiles = { jobId: null, list: [], busy: false };
+
+function livePanelHtml() {
+  return "<label>Files</label>" +
+    '<div id="ldrop" class="drop">Drop files here, or <button class="linkish" id="lpick">choose them</button>' +
+    '<input id="lfileInput" type="file" multiple hidden></div>' +
+    '<div id="lfileBox"><div class="nobody">Loading\u2026</div></div>';
+}
+
+function renderLiveFiles() {
+  const box = document.getElementById("lfileBox");
+  if (!box) return;
+  if (liveFiles.busy) {
+    box.innerHTML = '<div class="nobody">Sending\u2026</div>';
+    return;
+  }
+  box.innerHTML = liveFiles.list.length
+    ? liveFiles.list.map((f) =>
+      '<div class="filerow">' +
+      '<input class="fname" data-id="' + esc(f.id) + '" value="' + esc(f.name) + '">' +
+      '<span class="fsize">' + Math.max(1, Math.round((f.size_bytes || 0) / 1024)) + " KB</span>" +
+      '<button class="x" data-rm="' + esc(f.id) + '" title="Take it off">\u00d7</button>' +
+      "</div>"
+    ).join("")
+    : '<div class="nobody">No files on this job yet.</div>';
+
+  for (const inp of box.querySelectorAll(".fname")) {
+    // On change, not on every keystroke — one write per rename, not per letter.
+    inp.onchange = async () => {
+      const res = await post({ action: "renameFile", fileId: inp.dataset.id, name: inp.value });
+      if (res.body.problem) note(res.body.problem);
+      else inp.value = res.body.name;
+    };
+  }
+  for (const b of box.querySelectorAll("button[data-rm]")) {
+    b.onclick = async () => {
+      const res = await post({ action: "deleteFile", fileId: b.dataset.rm });
+      if (res.body.problem) {
+        note(res.body.problem);
+        return;
+      }
+      liveFiles.list = liveFiles.list.filter((f) => f.id !== b.dataset.rm);
+      renderLiveFiles();
+    };
+  }
+}
+
+async function loadLiveFiles(jobId) {
+  liveFiles = { jobId, list: [], busy: false };
+  try {
+    const res = await fetch(API + "?" + authQuery({ files: jobId }));
+    liveFiles.list = (await res.json()).files || [];
+  } catch (_) { /* an empty list is honest enough here */ }
+  renderLiveFiles();
+}
+
+async function uploadLive(list) {
+  if (!liveFiles.jobId || !list.length) return;
+  liveFiles.busy = true;
+  renderLiveFiles();
+  try {
+    for (const file of list) {
+      if (!file || !file.size) continue;
+      await uploadOne(liveFiles.jobId, { file, name: baseName(file.name) }, null, 0, 0);
+    }
+  } catch (e) {
+    note((e && e.message) || "Could not send that file.");
+  }
+  liveFiles.busy = false;
+  await loadLiveFiles(liveFiles.jobId);
+}
+
+function wireLivePanel(jobId) {
+  const input = document.getElementById("lfileInput");
+  if (!input) return;
+  document.getElementById("lpick").onclick = () => input.click();
+  input.onchange = () => {
+    uploadLive([...input.files]);
+    input.value = "";
+  };
+  const drop = document.getElementById("ldrop");
+  for (const ev of ["dragenter", "dragover"]) {
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      drop.classList.add("over");
+    });
+  }
+  for (const ev of ["dragleave", "drop"]) {
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      drop.classList.remove("over");
+    });
+  }
+  drop.addEventListener("drop", (e) => uploadLive([...e.dataTransfer.files]));
+  loadLiveFiles(jobId);
+}
+
 // ── the crew on a booking ─────────────────────────────────────────────────
 //
 // A booking sits on EVERY allocated person's row, so this is reachable from any
@@ -672,6 +777,7 @@ function openCrewSheet(bookingId) {
     '<select id="addcrew"><option value="">Choose\u2026</option>' +
     spare.map((r) => '<option value="' + esc(r.resourceId) + '">' + esc(r.name) + "</option>").join("") +
     "</select>" +
+    livePanelHtml() +
     '<div class="problem" id="prob"></div>' +
     '<div class="actions"><button id="cancel">Done</button></div>' +
     "</div>";
@@ -690,6 +796,7 @@ function openCrewSheet(bookingId) {
   for (const b of veil.querySelectorAll("button[data-lead]")) {
     b.onclick = () => crewAction("lead", b.dataset.lead);
   }
+  wireLivePanel(c.jobId);
 }
 
 function closeCrewSheet() {
