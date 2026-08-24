@@ -1496,6 +1496,8 @@ function openQuickJob() {
     builderQuery: "",
     addingSupervisor: false,
     newSupervisorName: "",
+    newSupervisorEmail: "",
+    newSupervisorPhone: "",
     files: [],
   };
 
@@ -1716,9 +1718,18 @@ function supervisorBlock() {
   // Inline, not prompt(): a browser dialog sits outside the sheet's own look and
   // some mobile browsers suppress it outright, which fails silently.
   if (sheet.addingSupervisor) {
+    // Their number and address are asked for HERE, while the person is in front
+    // of you. A supervisor added with only a name is one somebody has to come
+    // back for — and the missing email is what quietly sends the pack to you.
     return '<label for="svnew">New site supervisor</label>' +
       '<input id="svnew" placeholder="Joe De Cata" autocomplete="off" value="' +
       esc(sheet.newSupervisorName || "") + '">' +
+      '<label for="svemail">Their email \u2014 reports go to this</label>' +
+      '<input id="svemail" placeholder="joe@macliving.com.au" autocomplete="off" value="' +
+      esc(sheet.newSupervisorEmail || "") + '">' +
+      '<label for="svphone">Their number</label>' +
+      '<input id="svphone" placeholder="04.." autocomplete="off" value="' +
+      esc(sheet.newSupervisorPhone || "") + '">' +
       '<div class="inlineact">' +
       '<button class="linkish" id="svsave">Add them</button>' +
       '<button class="linkish" id="svcancel">Cancel</button>' +
@@ -1746,6 +1757,8 @@ function wireSiteFields() {
       sheet.supervisors = [];
       sheet.addingSupervisor = false;
       sheet.newSupervisorName = "";
+      sheet.newSupervisorEmail = "";
+      sheet.newSupervisorPhone = "";
       renderSiteBlock();
     };
   }
@@ -1779,9 +1792,14 @@ function wireSiteFields() {
 
   const svnew = document.getElementById("svnew");
   if (svnew) {
+    // Kept on the sheet so a re-render does not throw away what has been typed.
     svnew.oninput = () => {
       sheet.newSupervisorName = svnew.value;
     };
+    const svemail = document.getElementById("svemail");
+    const svphone = document.getElementById("svphone");
+    if (svemail) svemail.oninput = () => (sheet.newSupervisorEmail = svemail.value);
+    if (svphone) svphone.oninput = () => (sheet.newSupervisorPhone = svphone.value);
     svnew.onkeydown = (ev) => {
       if (ev.key !== "Enter") return;
       // Enter here would otherwise submit the whole job with a half-typed name.
@@ -1850,7 +1868,13 @@ async function addBuilder(name) {
 async function addSupervisor(name) {
   const prob = document.getElementById("prob");
   stashSite();
-  const res = await post({ action: "createSupervisor", clientId: sheet.clientId, name });
+  const res = await post({
+    action: "createSupervisor",
+    clientId: sheet.clientId,
+    name,
+    email: sheet.newSupervisorEmail || "",
+    phone: sheet.newSupervisorPhone || "",
+  });
   if (res.body.problem) {
     if (prob) prob.textContent = res.body.problem;
     return;
@@ -1865,6 +1889,8 @@ async function addSupervisor(name) {
   sheet.supervisorId = res.body.supervisorId;
   sheet.addingSupervisor = false;
   sheet.newSupervisorName = "";
+  sheet.newSupervisorEmail = "";
+  sheet.newSupervisorPhone = "";
   renderSiteBlock();
 }
 
