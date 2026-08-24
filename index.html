@@ -410,6 +410,30 @@ td.target {
   padding: 3px 8px;
   cursor: pointer;
 }
+.grow {
+  flex: 1;
+}
+.search {
+  font: inherit;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  min-width: 200px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.qhits {
+  position: absolute;
+  right: 20px;
+  z-index: 5;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  background: var(--paper);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .14);
+}
+.addbtn {
+  margin-left: 0;
+}
 </style>
 
 <header>
@@ -420,8 +444,11 @@ td.target {
   <button id="prev">‹ Previous</button>
   <button id="now">Current</button>
   <button id="next">Next ›</button>
+  <span class="grow"></span>
+  <input id="q" class="search" placeholder="Search jobs" autocomplete="off">
   <button id="add" class="addbtn">+ Add job</button>
 </nav>
+<div id="qhits" class="results qhits" hidden></div>
 <div class="hint"
   id="hint">Drag a job sideways to change the day, or up and down to change who is on it. On a phone, tap a job then tap where it should go. Tap an empty square to add one, or ⋯ on a job to change its crew.</div>
 <div class="scroll">
@@ -618,6 +645,88 @@ async function move(bookingId, from, to) {
   }
 }
 
+
+
+// ── finding a job, and looking at one ─────────────────────────────────────
+//
+// The only way to reach a job with NO bookings: such a job is not drawn on the
+// board at all, so without this its plans are unreachable after the day it was
+// added.
+
+let searchTimer = null;
+
+async function searchJobs(q) {
+  const hits = document.getElementById("qhits");
+  if (q.trim().length < 2) {
+    hits.hidden = true;
+    return;
+  }
+  try {
+    const res = await fetch(API + "?" + authQuery({ find: q }));
+    const sites = (await res.json()).sites || [];
+    hits.hidden = false;
+    hits.innerHTML = sites.length
+      ? sites.map((st) => {
+        const lot = st.lot_number ? "/" + esc(st.lot_number) : "";
+        return '<div data-job="' + esc(st.id) + '">' + esc(st.client) + lot +
+          '<div class="sub2">' + esc(st.address) + "</div></div>";
+      }).join("")
+      : '<div class="sub2" style="padding:8px 10px">Nothing matched.</div>';
+    for (const el of hits.querySelectorAll("div[data-job]")) {
+      el.onclick = () => {
+        hits.hidden = true;
+        document.getElementById("q").value = "";
+        openJobSheet(el.dataset.job);
+      };
+    }
+  } catch (_) {
+    hits.hidden = true;
+  }
+}
+
+async function openJobSheet(jobId) {
+  if (crewSheet || sheet) return;
+  let job = null;
+  try {
+    const res = await fetch(API + "?" + authQuery({ job: jobId }));
+    job = (await res.json()).job;
+  } catch (_) { /* handled below */ }
+  if (!job) {
+    note("Could not open that job.");
+    return;
+  }
+
+  crewSheet = null;
+  const lot = job.lot_number ? "/" + esc(job.lot_number) : "";
+  const visits = job.visits.length
+    ? job.visits.map((v) => {
+      const who = v.crew.length
+        ? v.crew.map((c) => (c.isLead ? "\u{1F451} " : "") + esc(c.name)).join(", ")
+        : "nobody yet";
+      return '<div class="crewrow"><span class="nm">' + esc(v.day) + " \u00b7 " +
+        esc(v.workType.replace(/_/g, " ")) + '<div class="sub2">' + who + "</div></span></div>";
+    }).join("")
+    : '<div class="nobody">No visits booked yet.</div>';
+
+  const veil = document.createElement("div");
+  veil.className = "veil";
+  veil.innerHTML = '<div class="sheet">' +
+    "<h2>" + esc(job.client) + lot + "</h2>" +
+    '<div class="when">' + esc(job.address) +
+    (job.supervisor ? " \u00b7 " + esc(job.supervisor) : "") + "</div>" +
+    "<label>Visits</label>" + visits +
+    livePanelHtml() +
+    '<div class="problem" id="prob"></div>' +
+    '<div class="actions"><button id="cancel">Done</button></div>' +
+    "</div>";
+  document.body.appendChild(veil);
+
+  veil.addEventListener("click", (ev) => {
+    if (ev.target === veil) closeCrewSheet();
+  });
+  document.getElementById("cancel").onclick = closeCrewSheet;
+  wireLivePanel(jobId);
+}
 
 // ── files already on a job ────────────────────────────────────────────────
 //
@@ -1317,9 +1426,10 @@ function renderSiteBlock() {
       esc(sheet.address || "") + '">' +
       '<label for="lt">Lot number \u2014 optional</label><input id="lt" placeholder="20410" value="' +
       esc(sheet.lot || "") + '">' +
-      '<button class="linkish" id="findInstead">Find an existing site instead</button>';
+      (sheet.quick ? "" : '<button class="linkish" id="findInstead">Find an existing site instead</button>');
 
-    document.getElementById("findInstead").onclick = () => {
+    const fi = document.getElementById("findInstead");
+    if (fi) fi.onclick = () => {
       stashSite();
       sheet.newSite = false;
       renderSiteBlock();
@@ -1557,6 +1667,17 @@ document.getElementById("now").onclick = () => {
   offset = 0;
   load();
 };
+document.getElementById("q").oninput = (ev) => {
+  clearTimeout(searchTimer);
+  const v = ev.target.value;
+  searchTimer = setTimeout(() => searchJobs(v), 220);
+};
+document.addEventListener("click", (ev) => {
+  // Clicking anywhere else puts the results away.
+  if (!ev.target.closest || ev.target.closest("#qhits") || ev.target.closest("#q")) return;
+  document.getElementById("qhits").hidden = true;
+});
+
 document.getElementById("add").onclick = () => {
   if (!loading && !crewSheet && !sheet) openQuickJob();
 };
