@@ -445,7 +445,7 @@ td.target {
   <button id="now">Current</button>
   <button id="next">Next ›</button>
   <span class="grow"></span>
-  <input id="q" class="search" placeholder="Search jobs" autocomplete="off">
+  <input id="jq" class="search" placeholder="Search jobs" autocomplete="off">
   <button id="add" class="addbtn">+ Add job</button>
 </nav>
 <div id="qhits" class="results qhits" hidden></div>
@@ -675,7 +675,7 @@ async function searchJobs(q) {
     for (const el of hits.querySelectorAll("div[data-job]")) {
       el.onclick = () => {
         hits.hidden = true;
-        document.getElementById("q").value = "";
+        document.getElementById("jq").value = "";
         openJobSheet(el.dataset.job);
       };
     }
@@ -1667,14 +1667,14 @@ document.getElementById("now").onclick = () => {
   offset = 0;
   load();
 };
-document.getElementById("q").oninput = (ev) => {
+document.getElementById("jq").oninput = (ev) => {
   clearTimeout(searchTimer);
   const v = ev.target.value;
   searchTimer = setTimeout(() => searchJobs(v), 220);
 };
 document.addEventListener("click", (ev) => {
   // Clicking anywhere else puts the results away.
-  if (!ev.target.closest || ev.target.closest("#qhits") || ev.target.closest("#q")) return;
+  if (!ev.target.closest || ev.target.closest("#qhits") || ev.target.closest("#jq")) return;
   document.getElementById("qhits").hidden = true;
 });
 
