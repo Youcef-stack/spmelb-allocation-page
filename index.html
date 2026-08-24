@@ -2007,6 +2007,7 @@ let dragging = null;
 document.addEventListener("dragstart", (ev) => {
   const card = ev.target.closest && ev.target.closest(".card");
   if (!card) return;
+  clearTimeout(tapTimer);
   draggingRow = null;
   dragging = { bookingId: card.dataset.booking, from: cellOf(card.closest("td")) };
   card.classList.add("dragging");
@@ -2031,6 +2032,7 @@ document.addEventListener("dragover", (ev) => {
 });
 
 document.addEventListener("drop", (ev) => {
+  clearTimeout(tapTimer);
   if (!dragging) return;
   const td = ev.target.closest && ev.target.closest("td[data-day]");
   if (!td) return;
@@ -2048,6 +2050,11 @@ document.addEventListener("drop", (ev) => {
 document.addEventListener("click", (ev) => {
   // The crew button comes first: it sits inside a card, and tapping it must not
   // also pick the card up for a move.
+  // A pending "open the add sheet" from an earlier tap on an empty square must
+  // never survive into the next gesture — it would fire mid-move and put a sheet
+  // over the board, which reads as the drag simply not working.
+  clearTimeout(tapTimer);
+
   const more = ev.target.closest && ev.target.closest("[data-more]");
   if (more) {
     ev.stopPropagation();
@@ -2088,8 +2095,12 @@ document.addEventListener("click", (ev) => {
   // the gesture every time.
   if (loading || crewSheet || sheet || jobSheet) return;
   const cell = cellOf(td);
-  clearTimeout(tapTimer);
-  tapTimer = setTimeout(() => openSheet(cell), 260);
+  tapTimer = setTimeout(() => {
+    // Re-checked at FIRING time, not just when it was set: 260 ms is long enough
+    // for a card to have been picked up or a sheet to have opened in between.
+    if (picked || loading || crewSheet || sheet || jobSheet) return;
+    openSheet(cell);
+  }, 260);
 });
 
 document.addEventListener("keydown", (ev) => {
