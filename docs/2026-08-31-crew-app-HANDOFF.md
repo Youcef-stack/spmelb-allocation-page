@@ -1,14 +1,17 @@
-# Handoff — the allocation board, and what a crew app inherits
+# Handoff — the allocation board, and the crew app beside it
 
 **Date:** 31 August 2026
 **Repo:** `youcef-stack/spmelb-allocation-page`
-**Scope of this doc:** Part 1 documents the board exactly as it is built today.
-Part 2 is analysis: what a crew-facing app can reuse from it, and what is
-genuinely missing.
 
-Everything in Part 1 is verifiable from `index.html` at the commit this doc was
-written against (`60c9c21`). Part 2 is a reading of that code, not a spec anyone
-has signed off.
+**Scope.** Part 1 documents this board exactly as it is built today. Part 2
+documents the crew app that already exists alongside it — which lives in another
+repo and another Edge Function, and which answers most of what this board leaves
+open.
+
+Part 1 is verifiable from `index.html` at the commit this doc was written
+against (`60c9c21`). Part 2 is read from the **deployed** `crew` function, not
+from its repository, so treat file and line references there as a pointer to the
+real source rather than a citation of it.
 
 ---
 
@@ -259,68 +262,76 @@ Real, small, and safe to leave alone if you are here for something else:
 
 ---
 
-## Part 2 — what a crew app inherits
+## Part 2 — the crew app, which already exists
 
-*This half is analysis. Nothing below has been built or agreed.*
+*Corrected 31 Aug, after reading the deployed functions. An earlier draft of
+this section guessed at what a crew app would need. Most of it is built, so
+what follows is what is actually there.*
 
-The board is the office's side: who is working where. The counterpart is the
-contractors' side — a crew member seeing their own visits, opening the plans, and
-filing the report. Here is what that app would get for free and what it would
-have to build.
+### Where it lives
 
-### Already there, and reusable as-is
+The crew app's API is the **`crew` Edge Function** on the same Supabase project
+(deployed, v14, last updated 30 Aug 2026). Its front end is a static HTML shell
+**on Netlify** — not GitHub Pages, and not in this repo or `spmelb-report-page`.
 
-- **The auth pattern.** Fragment-carried credentials to a Supabase Edge Function,
-  with the host never seeing the token. It works and it is cheap.
-- **Signed URLs for private files.** `fileUrl` and `reportUrl` already mint them.
-  A crew app can open plans and report PDFs on day one with no backend work.
-- **Direct-to-Storage upload.** `uploadUrl` → `PUT` → `recordFile`, with SHA-256
-  dedupe. This is exactly the path site photos from a phone would want, and it is
-  already proven on 20 MB plan sets over site signal.
-- **The job payload.** `?job=` already carries the address, the lot, the
-  supervisor's name, email and phone, every visit with its crew, and every report
-  with its state and photo count. Most of a crew-facing job screen is in that one
-  response.
-- **`booking.notes`.** The field is labelled "Note to contractor" and the office
-  is already filling it in. **Nothing reads it back to the contractor.** That is
-  the single clearest piece of value sitting unused in the data model.
-- **The work-type list and palette.** `grid.workTypes` plus `COLOURS`, so both
-  apps can look like the same system.
-- **`resourceId`.** The contractor identity already exists and is already the key
-  the whole board is organised by.
+Its own header explains the split, and it is the same reasoning as this board:
 
-### What is missing, in rough order of difficulty
+> STANDALONE, like allocation and report-edit and for the same reason: Supabase
+> serves every response from the functions domain as `text/plain` with
+> `nosniff`, so a browser shows source instead of a page.
 
-1. **Per-resource auth.** This is the blocker. The current credentials are the
-   office's, and the grid endpoint returns *the entire board*. A crew app cannot
-   reuse `load()` without handing every contractor every other contractor's work.
-   It needs its own credential scoped to one `resourceId`, and a read endpoint
-   that returns only that person's cells. That is a function change, not a client
-   change.
-2. **A read endpoint shaped for one person.** The 21-day × 29-row grid is the
-   wrong payload for a phone showing "today and tomorrow". Same data, different
-   cut.
-3. **Report submission.** The state machine (draft → submitted → approved) is
-   visible in the board but only ever read. Moving draft → submitted is precisely
-   what the crew app is for, and none of that write path exists here.
-4. **Writing `off`.** The office crosses out days. Crews are the ones who know
-   they are unavailable. `dayOff` already exists as an action; it would need to
-   accept a request from the crew side, which is a permissions question more than
-   a code one.
-5. **Notification.** Nothing pushes. The board is polled by opening it. A crew
-   app that only shows changes when you happen to open it will get blamed for
-   missed jobs.
+### It already answers what this board leaves open
 
-### Advice for whoever builds it
+| Gap you would predict from this repo | What is actually there |
+|---|---|
+| Per-resource auth | `crewauth.ts` — a signed-in crew member and nothing else. JWT → `crew_logins` → `resourceId`. An inactive row refuses. |
+| The grid leaking the whole board | Solved by construction: *"NO ENDPOINT TAKES A PERSON'S ID FROM THE CALLER."* Every query is scoped by `actor.resourceId` from the JWT. |
+| Filing a report | `start`, `answer`, `flag`, `categories`, `submit` |
+| Photos from a phone | `photo_slot` → `photo_filed`, plus `photo_delete`; the same pattern again for video and voice |
+| Push | `push_subscribe` / `push_unsubscribe`, with a separate `send-push` function |
+| Hours | `clock_on` / `clock_off`, sharing `clock.ts` with the bot so the app and the bot cannot disagree about a man's hours |
 
-- **Find and read the Edge Function first.** It is most of the system and none of
-  it is in this repo. Do not start by writing client code.
-- **Resist sharing a codebase with this page.** They share an API, not a UI. This
-  file's string-concatenation style is right for a 2,000-line internal board and
-  wrong for an app with real routing and offline behaviour.
-- **Keep the vocabulary.** Job = site, booking = visit. The moment the two apps
-  disagree on that, every conversation about a bug costs ten minutes.
-- **Copy the touch discipline, not the code.** The 260 ms tap timer, the
-  re-checked guards, the `stopPropagation` on nested controls — those are the
-  scars of a board used one-handed in a ute. A crew app will earn the same ones
-  faster if it starts from those rules.
+**`booking.notes` is read.** An earlier draft of this doc called it the clearest
+piece of unused value in the data model. That was wrong: the crew app surfaces
+it as `note` on the job (`crew/index.ts:432`, `crewday.ts:157`). The office
+writes "Note to contractor" on the board and the crew see it.
+
+### The two doors, and why they differ
+
+This board authenticates with a signed link in the fragment; the crew app
+refuses that outright. The reason is in `crewauth.ts` and is worth understanding
+before anyone "unifies" the two:
+
+> The board has two doors because the office opens it from a Telegram tap; this
+> app is installed on a phone and its owner logs in. A second door here would be
+> a way around a revocation.
+
+So the board's link-is-the-credential model is a deliberate exception for office
+staff, not a pattern to copy into the crew app.
+
+### Where the two actually meet
+
+- **`resources.id`.** The board's `resourceId` and the crew app's
+  `actor.resourceId` are the same key. That is the whole join between them.
+- **Reports.** This board *reads* them — state, photo count, the compiled PDF.
+  The crew app *writes* them, and `report-edit` (a third app,
+  `spmelb-report-page`) is where the office fixes one before it goes out.
+- **Day off vs. clock.** The board's `off` is the office crossing somebody out
+  in advance. The crew app's `clock_on`/`clock_off` is the shift actually
+  worked. They are different facts and neither writes the other — that is
+  genuinely still open.
+
+### If you are picking this board up
+
+- **Read the `allocation` function first.** It is most of this system and none
+  of it is in this repo. Same for `crew` and `report-edit` in their apps.
+- **The PDF is compiled at submit.** Anything that changes a submitted report
+  afterwards has to trigger a recompile, or the document on file and the page
+  disagree. Both `crew` and `report-edit` do this; a new writer must too.
+- **Keep the vocabulary.** Job = site, booking = visit. Three apps and a
+  Telegram bot share it; the moment one drifts, every conversation about a bug
+  costs ten minutes.
+- **Copy the touch discipline, not the code.** The 260 ms tap timer, the guards
+  re-checked at firing time, the `stopPropagation` on nested controls — those
+  are the scars of a board used one-handed in a ute, and they are cheaper to
+  inherit than to rediscover.
